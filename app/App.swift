@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 16
+let VERSION = 17
 
 final class Tab {
     let phoneId: String
@@ -354,7 +354,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastReconcile = Date.distantPast
     @objc func toggleRotation() {
         guard let s = cur(), s.width > 0 else { return }
-        rotate(s.width > s.height ? 0 : 1)        // one press turns the phone the other way
+        let wasLandscape = wantLandscape[tabs[active].phoneId] ?? (s.width > s.height)      // the last thing asked, not the picture that is still catching up
+        rotate(wasLandscape ? 0 : 1)        // one press turns the phone the other way
     }
     func realRotation(_ ser: String) -> Int? {
         let out = adb(ser, ["shell", "dumpsys window displays | grep -m1 mCurrentRotation"], timeout: 8)
