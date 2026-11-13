@@ -186,3 +186,9 @@ final class TabBar: NSView {
         line.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 1)
     }
 }
+
+/// Natural width of a button or label.
+func fitW(_ v: NSView) -> CGFloat {
+    if let c = v as? NSControl { c.sizeToFit() }
+    return ceil(v.frame.width) + 2
+}

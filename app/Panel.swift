@@ -61,7 +61,7 @@ final class PhoneCard: NSView {
         // badges row, centred
         var items: [NSView] = []
         for (i, b) in badges.enumerated() { if i > 0 { items.append(sep[i - 1]) }; items.append(b) }
-        var sizes = items.map { v -> CGFloat in v.sizeToFit(); return ceil(v.frame.width) + 2 }
+        var sizes = items.map { fitW($0) }
         let total = sizes.reduce(0, +) + 10 * CGFloat(max(0, items.count - 1))
         var x = (w - total) / 2
         for (i, v) in items.enumerated() { v.frame = NSRect(x: x, y: bounds.height - 58, width: sizes[i], height: 20); x += sizes[i] + 10 }
@@ -121,7 +121,7 @@ final class PhonesPanel: NSView {
         let cw = min(440, w - 40), ch: CGFloat = 92
         var y = bounds.height - 56 - ch
         for c in cards { c.frame = NSRect(x: (w - cw) / 2, y: y, width: cw, height: ch); y -= ch + 12 }
-        var sizes = footer.map { v -> CGFloat in v.sizeToFit(); return ceil(v.frame.width) + 2 }
+        var sizes = footer.map { fitW($0) }
         let total = sizes.reduce(0, +) + 12 * CGFloat(max(0, footer.count - 1))
         var x = (w - total) / 2
         for (i, v) in footer.enumerated() { v.frame = NSRect(x: x, y: 14, width: sizes[i], height: 20); x += sizes[i] + 12 }

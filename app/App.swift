@@ -172,7 +172,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             else if v === muteBtn { sizes.append(NSSize(width: 74, height: 20)) }
             else if v === pvValue { sizes.append(NSSize(width: 70, height: 20)) }
             else if v === spkBtn { sizes.append(NSSize(width: 120, height: 20)) }
-            else { v.sizeToFit(); sizes.append(NSSize(width: ceil(v.frame.width) + 2, height: 20)) }
+            else { sizes.append(NSSize(width: fitW(v), height: 20)) }
         }
         let total = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, views.count - 1))
         var x = (root.bounds.width - total) / 2
