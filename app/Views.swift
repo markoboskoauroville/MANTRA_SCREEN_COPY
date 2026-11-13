@@ -144,7 +144,7 @@ final class TabBar: NSView {
         super.init(frame: frame)
         plus = WordButton("+", target: self, action: #selector(addTapped))
         plus.setAccessibilityLabel("Add a phone")
-        addSubview(line); addSubview(under); addSubview(plus)
+        addSubview(line); addSubview(under); addSubview(plus); plus.isHidden = true
         under.wantsLayer = true; under.layer?.backgroundColor = ACCENT.cgColor
     }
     required init?(coder: NSCoder) { fatalError() }

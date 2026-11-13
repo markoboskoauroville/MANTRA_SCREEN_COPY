@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 4
+let VERSION = 5
 
 final class Tab {
     let phoneId: String
@@ -29,11 +29,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let root = Root()
     let tabBar = TabBar()
     let panel = PhonesPanel()
-    var panelShown = true
+    var panelShown = false
     var tabs: [Tab] = []
     var active = 0
     let hl1 = hairline()
-    var navButtons: [NSView] = []
     var sliderRow: [NSView] = []
     let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     let pvValue = label("— / —", size: 12, color: BRIGHT)
@@ -44,7 +43,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var closedIds = Set<String>()
     var lastMouse = Date()
     var cursorHidden = false
-    let immBtn = WordButton("IMMERSIVE", target: nil, action: nil)
     var lastUserVol = Date.distantPast
     var volBusy = false
     var lastVolPoll = Date.distantPast
@@ -64,27 +62,21 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         root.owner = self
         root.wantsLayer = true
         root.addSubview(tabBar); root.addSubview(hl1)
-        root.addSubview(panel)
+        root.addSubview(panel); panel.isHidden = true
         tabBar.onSelect = { [weak self] i in self?.select(i) }
         tabBar.onClose = { [weak self] i in self?.close(i) }
-        tabBar.onAdd = { [weak self] _ in self?.togglePanel() }
-        panel.onOpen = { [weak self] id in self?.openPhone(id) }
+                panel.onOpen = { [weak self] id in self?.openPhone(id) }
         panel.onRoute = { [weak self] id, a in self?.forceRoute(id, a) }
         panel.onTcpip = { [weak self] id in self?.enableTcpip(id) }
         panel.onScan = { Discovery.shared.scanNow() }
         panel.onAddr = { [weak self] in self?.addAddress() }
         panel.onPair = { [weak self] in self?.pairPhone() }
 
-        immBtn.target = self; immBtn.action = #selector(toggleImmersive)
-        let back = WordButton("BACK", target: self, action: #selector(navBack))
-        let home = WordButton("HOME", target: self, action: #selector(navHome))
-        let apps = WordButton("APPS", target: self, action: #selector(navApps))
-        navButtons = pipes([back, home, apps, immBtn])
         slider.target = self; slider.action = #selector(volumeChanged)
         slider.isContinuous = true
         slider.setAccessibilityLabel("Phone volume")
         sliderRow = [slider, pvValue]
-        for v in navButtons + sliderRow { root.addSubview(v) }
+        for v in sliderRow { root.addSubview(v) }
         root.addSubview(status)
 
         window.center()
@@ -116,6 +108,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let m = NSMenu()
         m.addItem(withTitle: "Quit Screen Copy (Mantra)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         app.submenu = m
+        let ph = NSMenuItem(); main.addItem(ph)
+        let pm = NSMenu(title: "Phones")
+        for (t, s) in [("Scan now", #selector(menuScan)), ("Add an address…", #selector(menuAddr)), ("Pair a phone…", #selector(menuPair)), ("Switch on Wi-Fi access for the phone on USB", #selector(menuTcpip))] {
+            let it = NSMenuItem(title: t, action: s, keyEquivalent: ""); it.target = self; pm.addItem(it)
+        }
+        ph.submenu = pm
         let tabItem = NSMenuItem(); main.addItem(tabItem)
         let tm = NSMenu(title: "Tabs")
         for i in 1...9 {
@@ -127,6 +125,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.mainMenu = main
     }
     @objc func menuTab(_ s: NSMenuItem) { select(s.tag) }
+    @objc func menuScan() { Discovery.shared.scanNow() }
+    @objc func menuAddr() { addAddress() }
+    @objc func menuPair() { pairPhone() }
+    @objc func menuTcpip() { if tabs.indices.contains(active) { enableTcpip(tabs[active].phoneId) } }
 
     // MARK: layout
     func layoutAll() {
@@ -134,20 +136,19 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if immersive {
             for t in tabs { t.view.frame = root.bounds }
             for v in [tabBar, hl1, panel, status] as [NSView] { v.isHidden = true }
-            for v in navButtons + sliderRow { v.isHidden = true }
+            for v in sliderRow { v.isHidden = true }
             return
         }
-        tabBar.isHidden = false; hl1.isHidden = false; status.isHidden = false; panel.isHidden = !panelShown
-        for v in navButtons + sliderRow { v.isHidden = false }
-        let tabH: CGFloat = 36, bottom: CGFloat = 96
+        tabBar.isHidden = false; hl1.isHidden = false; status.isHidden = false; panel.isHidden = true
+        for v in sliderRow { v.isHidden = false }
+        let tabH: CGFloat = 36, bottom: CGFloat = 56
         tabBar.frame = NSRect(x: 0, y: h - tabH, width: w, height: tabH)
         hl1.frame = NSRect(x: 0, y: bottom, width: w, height: 1)
         let area = NSRect(x: 0, y: bottom + 1, width: w, height: max(0, h - tabH - bottom - 1))
         for t in tabs { t.view.frame = area }
         panel.frame = area
-        center(navButtons, y: bottom - 32, spacing: 12)
-        center(sliderRow, y: bottom - 64, spacing: 12)
-        status.frame = NSRect(x: 12, y: 6, width: w - 24, height: 18)
+        center(sliderRow, y: bottom - 40, spacing: 12)
+        status.frame = NSRect(x: 12, y: h / 2 - 9, width: w - 24, height: 18)
     }
     func center(_ views: [NSView], y: CGFloat, spacing: CGFloat) {
         var sizes: [NSSize] = []
@@ -233,7 +234,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         t.session.stop(); t.view.removeFromSuperview()
         active = min(active, max(0, tabs.count - 1))
         save(); refreshTabs()
-        if !tabs.isEmpty { select(active) } else { panelShown = true; panel.isHidden = false }
+        if !tabs.isEmpty { select(active) }
         refreshStatus(); reloadPanel()
     }
 
@@ -337,14 +338,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: controls
     func cur() -> Session? { active < tabs.count ? tabs[active].session : nil }
-    @objc func navBack() { cur()?.key(4) }
-    @objc func navHome() { cur()?.key(3) }
-    @objc func navApps() { cur()?.key(187) }
     func applyAudio() {
-        for (i, t) in tabs.enumerated() {
-            let on = i == active
-            if t.session.audio.enabled != on { t.session.audio.enabled = on; if !on { t.session.audio.silence() } }
-        }
+        for t in tabs where !t.session.audio.enabled { t.session.audio.enabled = true }   // every phone's sound, pre-fader, to the Mac's default output
     }
 
     // The slider is the phone's own media volume, two ways: moving it sets the phone, a change on the phone moves it.
@@ -426,10 +421,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func refreshStatus() {
         for t in tabs { t.view.showNote(t.session.status == "LIVE" ? nil : t.session.status) }
-        guard let t = tabs.indices.contains(active) ? tabs[active] : nil else { status.stringValue = "NO PHONE OPEN"; return }
+        guard let t = tabs.indices.contains(active) ? tabs[active] : nil else { status.stringValue = Discovery.shared.firstDone ? "NO PHONE FOUND · PLUG ONE IN OR TURN ON ITS WI-FI DEBUGGING" : "LOOKING FOR PHONES…"; return }
         let s = t.session
         let db = s.audio.levelDb <= -100 ? "silent" : "\(Int(s.audio.levelDb)) dB"
-        status.stringValue = "\(s.width)×\(s.height) · \(s.fps) fps · \(s.audioState) \(db)"
+        _ = db; status.stringValue = ""
     }
 
     func application(_ app: NSApplication, open urls: [URL]) {

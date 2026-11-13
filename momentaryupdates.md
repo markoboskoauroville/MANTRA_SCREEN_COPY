@@ -23,3 +23,7 @@
 "this volume slider in the screen copy of Mantra is the wrong one. It needs to adjust the volume on my phone remotely. That's what we want, and that's it. This control, which is a slider, please make it control the volume on the phone remotely."
 
 "don't make general controls that control all phones. I want it to simply be that when I tap a phone, the controls are attached to that phone ... One-tap controls are attached to that phone. Make things logical and not confusing. What you did is very, very confusing, and I don't need output volume control for the screen copy itself. I just need to control the volume of the whole phone remotely with this slider, and that's it. It can also reflect if I'm changing volume on my phone: the slider will move on my screen copy as well."
+
+## 13.11.2026, Marko, simplify further for v5 (via the coordinator)
+
+"another confirmation thing: you put Back Home apps. What is this? ... I have buttons to control it, so I don't need Back Home apps. I don't need this tab. All tabs sound nothing. I just need one slider to control the volume of the phone remotely, and that's it. The rest of the controls are on screen ... the screen of the phone itself. Nothing to press remotely here. My issue is that my phone is playing sound somewhere in distance. I can control that, and the full volume pre-fader is coming here. Very simple".
