@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 9
+let VERSION = 10
 
 final class Tab {
     let phoneId: String
@@ -348,16 +348,53 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // The slider is the phone's own media volume, two ways: moving it sets the phone, a change on the phone moves it.
     // (The Mac listens pre-fader, so this never changes what you hear.)
-    // Rotation of the phone: the toggle sets it (auto-rotate stays off), and it shows the real orientation of the picture.
+    // Rotation: the phone is asked to turn (`cmd window user-rotation lock`, auto-rotate stays off). If the app in front
+    // keeps the phone upright (the home screen does), the PICTURE is turned by the capture instead, so the view is landscape anyway.
+    var wantLandscape: [String: Bool] = [:]
+    var rotBusy = false
+    var lastReconcile = Date.distantPast
     @objc func setPortrait() { rotate(0) }
     @objc func setLandscape() { rotate(1) }
+    func realRotation(_ ser: String) -> Int? {
+        let out = adb(ser, ["shell", "dumpsys window displays | grep -m1 mCurrentRotation"], timeout: 8)
+        guard let r = out.range(of: "ROTATION_") else { return nil }
+        return Int(out[r.upperBound...].prefix(while: { $0.isNumber }))
+    }
     func rotate(_ n: Int) {
         guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty else { return }
-        let ser = tabs[active].session.serial
-        DispatchQueue.global().async {
+        let t = tabs[active]
+        wantLandscape[t.phoneId] = (n == 1)
+        let ser = t.session.serial
+        DispatchQueue.global().async { [weak self] in
             _ = adb(ser, ["shell", "settings", "put", "system", "accelerometer_rotation", "0"], timeout: 8)
-            _ = adb(ser, ["shell", "settings", "put", "system", "user_rotation", "\(n)"], timeout: 8)
-            logLine("rotation \(ser): user_rotation \(n)")
+            _ = adb(ser, ["shell", "cmd", "window", "user-rotation", "lock", "\(n)"], timeout: 8)
+            logLine("rotation \(ser): lock \(n)")
+            self?.lastReconcile = .distantPast
+        }
+    }
+    /// Every ~3 s: compare what was asked with what the phone really does, and turn the picture only when the phone does not.
+    func reconcileRotation() {
+        if rotBusy || Date().timeIntervalSince(lastReconcile) < 3 { return }
+        guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty, tabs[active].session.status == "LIVE" else { return }
+        let t = tabs[active]
+        guard let want = wantLandscape[t.phoneId] else { return }
+        lastReconcile = Date(); rotBusy = true
+        let ser = t.session.serial
+        DispatchQueue.global().async { [weak self] in
+            let real = self?.realRotation(ser)
+            DispatchQueue.main.async {
+                self?.rotBusy = false
+                guard let real = real else { return }
+                let cap = t.session.captureRotation
+                var newCap = cap
+                if want { if real == 1 { newCap = 0 } else if cap == 0 { newCap = 90 } }
+                else { newCap = 0 }
+                if newCap != cap {
+                    logLine("rotation reconcile \(ser): phone \(real), want landscape \(want), capture \(cap) -> \(newCap)")
+                    t.session.captureRotation = newCap
+                    t.session.reconnect()
+                }
+            }
         }
     }
     func paintRotation() {
@@ -436,6 +473,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshStatus()
         pollVolume()
         paintRotation()
+        reconcileRotation()
         if immersive && !cursorHidden && Date().timeIntervalSince(lastMouse) > 2 { NSCursor.hide(); cursorHidden = true }
         refreshTabs()
         if Date().timeIntervalSince(lastLog) > 5 {

@@ -35,3 +35,7 @@
 ## 13.11.2026, Marko, sound hijacked (via the coordinator), v9
 
 "He tested the sound on my phone. And he lowered the sound on my phone. And now I lost the control of the sound on my phone ... whatever I'm doing, with volume up or down, my sound is not happening on the phone. Actually the sound from my phone is now hijacked by screen copy and I cannot have sound on two locations which is very bad. Please make the sound pre-fader listening and fader listening two locations."
+
+## 13.11.2026, Marko, landscape does nothing (via the coordinator), v10
+
+"please look at my screen copy: Mantra Portrait Landscape Test. Doesn't pass. I press Landscape. Nothing happening"
