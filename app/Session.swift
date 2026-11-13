@@ -341,17 +341,37 @@ final class Session {
         let pressure: UInt16 = action == 1 ? 0 : 0xffff
         let btn: UInt32 = action == 1 ? 0 : 1
         let actionButton: UInt32 = action == 2 ? 0 : 1
-        let msg: [UInt8] = [2, action] + [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]
-            + put32(UInt32(max(0, min(width - 1, x)))) + put32(UInt32(max(0, min(height - 1, y))))
-            + put16(UInt16(width)) + put16(UInt16(height)) + put16(pressure) + put32(actionButton) + put32(btn)
+        let px: UInt32 = UInt32(max(0, min(width - 1, x)))
+        let py: UInt32 = UInt32(max(0, min(height - 1, y)))
+        var msg: [UInt8] = [2, action]
+        msg += [UInt8](repeating: 0xff, count: 8)
+        msg += put32(px)
+        msg += put32(py)
+        msg += put16(UInt16(width))
+        msg += put16(UInt16(height))
+        msg += put16(pressure)
+        msg += put32(actionButton)
+        msg += put32(btn)
         send(msg)
     }
 
     func scroll(x: Int, y: Int, h: Double, v: Double) {
         if width == 0 { return }
-        func fix(_ d: Double) -> UInt16 { UInt16(bitPattern: Int16(max(-1, min(1, d / 16)) * 32767)) }
-        send([3] + put32(UInt32(max(0, min(width - 1, x)))) + put32(UInt32(max(0, min(height - 1, y))))
-             + put16(UInt16(width)) + put16(UInt16(height)) + put16(fix(h)) + put16(fix(v)) + put32(0))
+        func fix(_ d: Double) -> UInt16 {
+            let c: Double = max(-1.0, min(1.0, d / 16.0))
+            return UInt16(bitPattern: Int16(c * 32767.0))
+        }
+        let px: UInt32 = UInt32(max(0, min(width - 1, x)))
+        let py: UInt32 = UInt32(max(0, min(height - 1, y)))
+        var msg: [UInt8] = [3]
+        msg += put32(px)
+        msg += put32(py)
+        msg += put16(UInt16(width))
+        msg += put16(UInt16(height))
+        msg += put16(fix(h))
+        msg += put16(fix(v))
+        msg += put32(0)
+        send(msg)
     }
 }
 
