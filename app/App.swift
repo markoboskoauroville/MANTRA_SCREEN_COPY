@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 8
+let VERSION = 9
 
 final class Tab {
     let phoneId: String

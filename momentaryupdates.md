@@ -31,3 +31,7 @@
 ## 13.11.2026, Marko, for v6 (via the coordinator)
 
 "I need more controls beside this volume thing. I need to control orientation of the phone: landscape, portrait. That's it".
+
+## 13.11.2026, Marko, sound hijacked (via the coordinator), v9
+
+"He tested the sound on my phone. And he lowered the sound on my phone. And now I lost the control of the sound on my phone ... whatever I'm doing, with volume up or down, my sound is not happening on the phone. Actually the sound from my phone is now hijacked by screen copy and I cannot have sound on two locations which is very bad. Please make the sound pre-fader listening and fader listening two locations."
