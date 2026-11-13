@@ -433,7 +433,3 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ n: Notification) { for t in tabs { t.session.stop() } }
 }
 
-let app = NSApplication.shared
-let controller = Controller()
-app.delegate = controller
-app.run()
