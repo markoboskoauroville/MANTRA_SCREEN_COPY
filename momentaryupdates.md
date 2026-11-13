@@ -39,3 +39,7 @@
 ## 13.11.2026, Marko, landscape does nothing (via the coordinator), v10
 
 "please look at my screen copy: Mantra Portrait Landscape Test. Doesn't pass. I press Landscape. Nothing happening"
+
+## 13.11.2026, Marko, one rotation button (via the coordinator), v16
+
+"Again we are doing the same mistake. Portrait and landscape are two buttons and it can be only one button. Please fix that. And we can also always make a symbol which we did on the application for MPA. The same symbol used here."

@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 15
+let VERSION = 16
 
 final class Tab {
     let phoneId: String
@@ -37,8 +37,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     let pvValue = label("— / —", size: 12, color: BRIGHT)
     let status = label("", size: 11)
-    let portBtn = WordButton("PORTRAIT", target: nil, action: nil)
-    let landBtn = WordButton("LANDSCAPE", target: nil, action: nil)
+    var rotBtn: RoundIconButton!
     var timer: Timer?
     var lastLog = Date()
     var immersive = false
@@ -77,9 +76,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         slider.target = self; slider.action = #selector(volumeChanged)
         slider.isContinuous = true
         slider.setAccessibilityLabel("Phone volume")
-        portBtn.target = self; portBtn.action = #selector(setPortrait)
-        landBtn.target = self; landBtn.action = #selector(setLandscape)
-        sliderRow = [slider, pvValue] + pipes([portBtn, landBtn])
+        rotBtn = RoundIconButton(target: self, action: #selector(toggleRotation))
+        sliderRow = [slider, pvValue, rotBtn]
         for v in sliderRow { root.addSubview(v) }
         root.addSubview(status)
 
@@ -159,6 +157,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for v in views {
             if v === slider { sizes.append(NSSize(width: max(70, min(180, root.bounds.width - 330)), height: 18)) }
             else if v === pvValue { sizes.append(NSSize(width: 70, height: 20)) }
+            else if v === rotBtn { sizes.append(NSSize(width: 30, height: 30)) }
             else { sizes.append(NSSize(width: fitW(v), height: 20)) }
         }
         let total = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, views.count - 1))
@@ -353,8 +352,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var wantLandscape: [String: Bool] = [:]
     var rotBusy = false
     var lastReconcile = Date.distantPast
-    @objc func setPortrait() { rotate(0) }
-    @objc func setLandscape() { rotate(1) }
+    @objc func toggleRotation() {
+        guard let s = cur(), s.width > 0 else { return }
+        rotate(s.width > s.height ? 0 : 1)        // one press turns the phone the other way
+    }
     func realRotation(_ ser: String) -> Int? {
         let out = adb(ser, ["shell", "dumpsys window displays | grep -m1 mCurrentRotation"], timeout: 8)
         guard let r = out.range(of: "ROTATION_") else { return nil }
@@ -402,9 +403,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     func paintRotation() {
-        guard let s = cur(), s.width > 0 else { portBtn.normal = DIM; landBtn.normal = DIM; return }
+        guard let s = cur(), s.width > 0 else { return }
         let land = s.width > s.height
-        portBtn.normal = land ? DIM : ACCENT; landBtn.normal = land ? ACCENT : DIM
+        if rotBtn.landscape != land { rotBtn.landscape = land }
     }
 
     @objc func volumeChanged() {

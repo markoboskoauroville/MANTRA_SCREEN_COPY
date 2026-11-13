@@ -197,3 +197,35 @@ func fitW(_ v: NSView) -> CGFloat {
     if let c = v as? NSControl { c.sizeToFit() }
     return ceil(v.frame.width) + 2
 }
+
+/// One round icon button: a phone outline, upright or on its side, showing the state; a press turns the phone.
+final class RoundIconButton: NSButton {
+    private var area: NSTrackingArea?
+    var landscape = false { didSet { paint(false) } }
+    init(target: AnyObject?, action: Selector?) {
+        super.init(frame: .zero)
+        self.target = target; self.action = action
+        isBordered = false; imagePosition = .imageOnly
+        setButtonType(.momentaryChange)
+        wantsLayer = true
+        layer?.cornerRadius = 15; layer?.borderWidth = 1
+        setAccessibilityLabel("Rotate the phone")
+        paint(false)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func paint(_ hover: Bool) {
+        let name = landscape ? "iphone.landscape" : "iphone"
+        let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+        image = NSImage(systemSymbolName: name, accessibilityDescription: "Rotate the phone")?.withSymbolConfiguration(cfg)
+        contentTintColor = hover ? ACCENT : BRIGHT
+        layer?.borderColor = (hover ? ACCENT : NSColor(white: 1, alpha: 0.35)).cgColor
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let a = area { removeTrackingArea(a) }
+        area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area!)
+    }
+    override func mouseEntered(with event: NSEvent) { paint(true) }
+    override func mouseExited(with event: NSEvent) { paint(false) }
+}
