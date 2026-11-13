@@ -198,27 +198,32 @@ func fitW(_ v: NSView) -> CGFloat {
     return ceil(v.frame.width) + 2
 }
 
-/// One round icon button: a phone outline, upright or on its side, showing the state; a press turns the phone.
+/// The rotation switch, drawn like the one in the MPA app: a thin grey rounded rectangle, tall in portrait and wide in landscape,
+/// nothing else (MPA_ACADEMY_ANDROID Views.kt OrientView: 16x26 / 26x16 dp, stroke 2 dp, corner 3 dp, grey 8B8F94, amber 20 % when pressed).
 final class RoundIconButton: NSButton {
     private var area: NSTrackingArea?
-    var landscape = false { didSet { paint(false) } }
+    private var hover = false
+    var landscape = false { didSet { needsDisplay = true } }
     init(target: AnyObject?, action: Selector?) {
         super.init(frame: .zero)
         self.target = target; self.action = action
-        isBordered = false; imagePosition = .imageOnly
+        isBordered = false; title = ""
         setButtonType(.momentaryChange)
-        wantsLayer = true
-        layer?.cornerRadius = 15; layer?.borderWidth = 1
         setAccessibilityLabel("Rotate the phone")
-        paint(false)
     }
     required init?(coder: NSCoder) { fatalError() }
-    func paint(_ hover: Bool) {
-        let name = landscape ? "iphone.landscape" : "iphone"
-        let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
-        image = NSImage(systemSymbolName: name, accessibilityDescription: "Rotate the phone")?.withSymbolConfiguration(cfg)
-        contentTintColor = hover ? ACCENT : BRIGHT
-        layer?.borderColor = (hover ? ACCENT : NSColor(white: 1, alpha: 0.35)).cgColor
+    override func draw(_ dirtyRect: NSRect) {
+        let k: CGFloat = 1.5                                   // one MPA dp is 1.5 points here
+        if hover || isHighlighted {
+            NSColor(red: 0.96, green: 0.62, blue: 0.04, alpha: 0.2).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 6 * k, yRadius: 6 * k).fill()
+        }
+        let w = (landscape ? 26 : 16) * k, h = (landscape ? 16 : 26) * k
+        let r = NSRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
+        let p = NSBezierPath(roundedRect: r, xRadius: 3 * k, yRadius: 3 * k)
+        p.lineWidth = 2 * k
+        NSColor(red: 0.545, green: 0.561, blue: 0.580, alpha: 1).setStroke()
+        p.stroke()
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -226,6 +231,6 @@ final class RoundIconButton: NSButton {
         area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
         addTrackingArea(area!)
     }
-    override func mouseEntered(with event: NSEvent) { paint(true) }
-    override func mouseExited(with event: NSEvent) { paint(false) }
+    override func mouseEntered(with event: NSEvent) { hover = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hover = false; needsDisplay = true }
 }

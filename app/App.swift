@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 18
+let VERSION = 19
 
 final class Tab {
     let phoneId: String
@@ -157,7 +157,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for v in views {
             if v === slider { sizes.append(NSSize(width: max(70, min(180, root.bounds.width - 330)), height: 18)) }
             else if v === pvValue { sizes.append(NSSize(width: 70, height: 20)) }
-            else if v === rotBtn { sizes.append(NSSize(width: 30, height: 30)) }
+            else if v === rotBtn { sizes.append(NSSize(width: 48, height: 40)) }
             else { sizes.append(NSSize(width: fitW(v), height: 20)) }
         }
         let total = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, views.count - 1))
