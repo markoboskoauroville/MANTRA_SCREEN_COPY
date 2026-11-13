@@ -94,8 +94,10 @@ final class VideoView: NSView {
         let y = (r.maxY - p.y) / r.height * CGFloat(session.height)
         return (Int(x), Int(y))
     }
+    var onDouble: (() -> Void)?
     override func mouseDown(with e: NSEvent) {
         window?.makeFirstResponder(self)
+        if e.clickCount == 2 { onDouble?(); return }
         guard let (x, y) = phonePoint(e, clamp: false) else { return }
         touching = true; session.touch(action: 0, x: x, y: y)
     }
@@ -127,6 +129,7 @@ final class VideoView: NSView {
 
 /// The tab strip: one tab per phone (title, close), then +. Always centred.
 final class TabBar: NSView {
+    var live: [Bool] = [] { didSet { if live != oldValue { rebuild() } } }
     var titles: [String] = [] { didSet { if titles != oldValue { rebuild() } } }
     var selected = 0 { didSet { if selected != oldValue { rebuild() } } }
     var onSelect: ((Int) -> Void)?
@@ -154,7 +157,9 @@ final class TabBar: NSView {
         items = []
         for (i, t) in titles.enumerated() {
             let b = WordButton(t, target: self, action: #selector(tabTapped(_:)))
-            b.tag = i; b.normal = (i == selected) ? BRIGHT : DIM
+            b.tag = i
+            let isLive = i < live.count ? live[i] : true
+            b.normal = !isLive ? NSColor(white: 0.32, alpha: 1) : ((i == selected) ? BRIGHT : DIM)
             b.setAccessibilityLabel("Tab \(t)")
             let x = WordButton("✕", target: self, action: #selector(closeTapped(_:)))
             x.tag = i; x.normal = DIM

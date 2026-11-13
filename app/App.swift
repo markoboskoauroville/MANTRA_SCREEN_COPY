@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 2
+let VERSION = 3
 
 final class Tab {
     let phoneId: String
@@ -54,7 +54,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let pvAllBtn = WordButton("ALL PHONES", target: nil, action: nil)
     var startMuted = false
     var lastLog = Date()
-    var autoOpened = false
+    var immersive = false
+    var closedIds = Set<String>()
+    var lastMouse = Date()
+    var cursorHidden = false
+    let immBtn = WordButton("IMMERSIVE", target: nil, action: nil)
 
     override init() {
         thisBtn = WordButton("THIS TAB", target: nil, action: nil)
@@ -74,6 +78,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = NSColor(white: 0.06, alpha: 1)
         window.minSize = NSSize(width: 480, height: 680)
         window.delegate = self
+        window.collectionBehavior = [.fullScreenPrimary]
+        window.acceptsMouseMovedEvents = true
         window.contentView = root
         root.owner = self
         root.wantsLayer = true
@@ -92,7 +98,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let back = WordButton("BACK", target: self, action: #selector(navBack))
         let home = WordButton("HOME", target: self, action: #selector(navHome))
         let apps = WordButton("APPS", target: self, action: #selector(navApps))
-        navButtons = pipes([back, home, apps]) + [label("|", size: 12, color: DIM), spkBtn]
+        immBtn.target = self; immBtn.action = #selector(toggleImmersive)
+        navButtons = pipes([back, home, apps, immBtn]) + [label("|", size: 12, color: DIM), spkBtn]
         thisBtn.target = self; thisBtn.action = #selector(modeThis)
         allBtn.target = self; allBtn.action = #selector(modeAll)
         muteBtn.target = self; muteBtn.action = #selector(toggleMute)
@@ -117,6 +124,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         logLine("started v\(VERSION), window number \(window.windowNumber)")
+        if !UserDefaults.standard.bool(forKey: "speaksResetV3") { UserDefaults.standard.set([String](), forKey: "speaks"); UserDefaults.standard.set(true, forKey: "speaksResetV3") }
+        NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .mouseMoved, .leftMouseDown]) { [weak self] e in
+            guard let s = self else { return e }
+            return s.monitor(e)
+        }
         Discovery.shared.onChange = { [weak self] in self?.discoveryChanged() }
         Discovery.shared.start()
         restore()
@@ -144,6 +156,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let it = NSMenuItem(title: "Tab \(i)", action: #selector(menuTab(_:)), keyEquivalent: "\(i)")
             it.tag = i - 1; it.target = self; tm.addItem(it)
         }
+        let im = NSMenuItem(title: "Immersive", action: #selector(toggleImmersive), keyEquivalent: "f"); im.target = self; tm.addItem(im)
         tabItem.submenu = tm
         NSApp.mainMenu = main
     }
@@ -152,6 +165,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: layout
     func layoutAll() {
         let w = root.bounds.width, h = root.bounds.height
+        if immersive {
+            for t in tabs { t.view.frame = root.bounds }
+            for v in [tabBar, hl1, panel, status, pvTitle] as [NSView] { v.isHidden = true }
+            for v in navButtons + soundRow + pvRow + pvRow2 { v.isHidden = true }
+            return
+        }
+        tabBar.isHidden = false; hl1.isHidden = false; status.isHidden = false; pvTitle.isHidden = false; panel.isHidden = !panelShown
+        for v in navButtons + soundRow + pvRow + pvRow2 { v.isHidden = false }
         let tabH: CGFloat = 36, bottom: CGFloat = 176
         tabBar.frame = NSRect(x: 0, y: h - tabH, width: w, height: tabH)
         hl1.frame = NSRect(x: 0, y: bottom, width: w, height: 1)
@@ -191,22 +212,21 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func discoveryChanged() {
         for t in tabs { if let n = Discovery.shared.name(t.phoneId) { t.name = n } }
-        reloadPanel(); refreshTabs(); save()
-        if !autoOpened && Discovery.shared.firstDone {
-            autoOpened = true
-            if tabs.isEmpty {
-                for p in Discovery.shared.all() { addTab(phoneId: p.id, name: p.name) }
-                if !tabs.isEmpty { select(0); panelShown = false; panel.isHidden = true }
-            }
+        // every phone that is found gets its tab and stream by itself, best route first
+        for p in Discovery.shared.all() where !tabs.contains(where: { $0.phoneId == p.id }) && !closedIds.contains(p.id) {
+            addTab(phoneId: p.id, name: p.name, select: tabs.isEmpty)
+            panelShown = false; panel.isHidden = true
         }
+        reloadPanel(); refreshTabs(); save()
     }
 
     // MARK: tabs
     @discardableResult
-    func addTab(phoneId: String, name: String) -> Tab {
+    func addTab(phoneId: String, name: String, select sel: Bool = true) -> Tab {
         if let t = tabs.first(where: { $0.phoneId == phoneId }) { return t }
         let t = Tab(phoneId: phoneId, name: name)
         t.session.audio.muted = startMuted
+        t.view.onDouble = { [weak self] in self?.toggleImmersive() }
         t.session.phoneSpeaks = (UserDefaults.standard.stringArray(forKey: "speaks") ?? []).contains(phoneId)
         t.session.onChange = { [weak self] in self?.refreshStatus(); self?.refreshTabs() }
         tabs.append(t)
@@ -215,11 +235,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         layoutAll()
         t.session.start()
         save()
-        select(tabs.count - 1)
+        if sel { select(tabs.count - 1) }
         return t
     }
 
     func openPhone(_ id: String) {
+        closedIds.remove(id)
         if let i = tabs.firstIndex(where: { $0.phoneId == id }) { select(i) }
         else { addTab(phoneId: id, name: Discovery.shared.name(id) ?? id) }
         panelShown = false; panel.isHidden = true
@@ -249,6 +270,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func close(_ i: Int) {
         guard i >= 0, i < tabs.count else { return }
         let t = tabs.remove(at: i)
+        closedIds.insert(t.phoneId)
         t.session.stop(); t.view.removeFromSuperview()
         active = min(active, max(0, tabs.count - 1))
         save(); refreshTabs()
@@ -257,6 +279,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func refreshTabs() {
+        tabBar.live = tabs.map { $0.session.status == "LIVE" }
         tabBar.titles = tabs.map { $0.title }
         tabBar.selected = active
     }
@@ -277,8 +300,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let ids = UserDefaults.standard.stringArray(forKey: "phones") ?? []
         let names = UserDefaults.standard.dictionary(forKey: "names") as? [String: String] ?? [:]
         if !ids.isEmpty {
-            autoOpened = true
-            for id in ids { addTab(phoneId: id, name: names[id] ?? id) }
+            for id in ids { addTab(phoneId: id, name: names[id] ?? id, select: false) }
             select(0)
             panelShown = false; panel.isHidden = true
         }
@@ -337,6 +359,27 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             if !ip.isEmpty { logLine("tcpip connect \(ip): \(adb(nil, ["connect", "\(ip):5555"], timeout: 10))") }
             Discovery.shared.scanNow()
+        }
+    }
+
+    // MARK: immersive
+    @objc func toggleImmersive() { window.toggleFullScreen(nil) }
+    func windowDidEnterFullScreen(_ n: Notification) { immersive = true; lastMouse = Date(); layoutAll(); if let t = tabs.indices.contains(active) ? tabs[active] : nil { window.makeFirstResponder(t.view) } }
+    func windowDidExitFullScreen(_ n: Notification) { immersive = false; showCursor(); layoutAll() }
+    func showCursor() { if cursorHidden { NSCursor.unhide(); cursorHidden = false } }
+    func monitor(_ e: NSEvent) -> NSEvent? {
+        if e.window !== window { return e }
+        if e.type == .mouseMoved || e.type == .leftMouseDown { lastMouse = Date(); showCursor(); return e }
+        guard immersive else { return e }
+        let shift = e.modifierFlags.contains(.shift)
+        let other = e.modifierFlags.intersection([.command, .control, .option]).isEmpty == false
+        if other { return e }
+        switch e.keyCode {
+        case 48 where !tabs.isEmpty:
+            select((active + (shift ? tabs.count - 1 : 1)) % tabs.count); return nil
+        case 53: window.toggleFullScreen(nil); return nil
+        case 3 where !shift: window.toggleFullScreen(nil); return nil
+        default: return e
         }
     }
 
@@ -413,6 +456,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func tick() {
         refreshStatus()
+        if immersive && !cursorHidden && Date().timeIntervalSince(lastMouse) > 2 { NSCursor.hide(); cursorHidden = true }
+        refreshTabs()
         if Date().timeIntervalSince(lastLog) > 5 {
             lastLog = Date()
             for t in tabs { logLine("\(t.title): \(t.session.status) \(t.session.width)x\(t.session.height) frames \(t.session.framesTotal) fps \(t.session.fps) \(t.session.audioState) packets \(t.session.audio.packets) level \(Int(t.session.audio.levelDb)) dB") }
