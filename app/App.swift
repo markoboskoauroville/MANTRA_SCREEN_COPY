@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 5
+let VERSION = 6
 
 final class Tab {
     let phoneId: String
@@ -37,6 +37,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     let pvValue = label("— / —", size: 12, color: BRIGHT)
     let status = label("", size: 11)
+    let portBtn = WordButton("PORTRAIT", target: nil, action: nil)
+    let landBtn = WordButton("LANDSCAPE", target: nil, action: nil)
     var timer: Timer?
     var lastLog = Date()
     var immersive = false
@@ -75,7 +77,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         slider.target = self; slider.action = #selector(volumeChanged)
         slider.isContinuous = true
         slider.setAccessibilityLabel("Phone volume")
-        sliderRow = [slider, pvValue]
+        portBtn.target = self; portBtn.action = #selector(setPortrait)
+        landBtn.target = self; landBtn.action = #selector(setLandscape)
+        sliderRow = [slider, pvValue] + pipes([portBtn, landBtn])
         for v in sliderRow { root.addSubview(v) }
         root.addSubview(status)
 
@@ -153,7 +157,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func center(_ views: [NSView], y: CGFloat, spacing: CGFloat) {
         var sizes: [NSSize] = []
         for v in views {
-            if v === slider { sizes.append(NSSize(width: min(300, root.bounds.width - 140), height: 18)) }
+            if v === slider { sizes.append(NSSize(width: max(70, min(180, root.bounds.width - 330)), height: 18)) }
             else if v === pvValue { sizes.append(NSSize(width: 70, height: 20)) }
             else { sizes.append(NSSize(width: fitW(v), height: 20)) }
         }
@@ -344,6 +348,24 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // The slider is the phone's own media volume, two ways: moving it sets the phone, a change on the phone moves it.
     // (The Mac listens pre-fader, so this never changes what you hear.)
+    // Rotation of the phone: the toggle sets it (auto-rotate stays off), and it shows the real orientation of the picture.
+    @objc func setPortrait() { rotate(0) }
+    @objc func setLandscape() { rotate(1) }
+    func rotate(_ n: Int) {
+        guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty else { return }
+        let ser = tabs[active].session.serial
+        DispatchQueue.global().async {
+            _ = adb(ser, ["shell", "settings", "put", "system", "accelerometer_rotation", "0"], timeout: 8)
+            _ = adb(ser, ["shell", "settings", "put", "system", "user_rotation", "\(n)"], timeout: 8)
+            logLine("rotation \(ser): user_rotation \(n)")
+        }
+    }
+    func paintRotation() {
+        guard let s = cur(), s.width > 0 else { portBtn.normal = DIM; landBtn.normal = DIM; return }
+        let land = s.width > s.height
+        portBtn.normal = land ? DIM : ACCENT; landBtn.normal = land ? ACCENT : DIM
+    }
+
     @objc func volumeChanged() {
         lastUserVol = Date()
         pvValue.stringValue = "\(Int(slider.doubleValue.rounded())) / \(Int(slider.maxValue))"
@@ -411,6 +433,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func tick() {
         refreshStatus()
         pollVolume()
+        paintRotation()
         if immersive && !cursorHidden && Date().timeIntervalSince(lastMouse) > 2 { NSCursor.hide(); cursorHidden = true }
         refreshTabs()
         if Date().timeIntervalSince(lastLog) > 5 {

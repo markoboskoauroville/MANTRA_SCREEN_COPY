@@ -27,3 +27,7 @@
 ## 13.11.2026, Marko, simplify further for v5 (via the coordinator)
 
 "another confirmation thing: you put Back Home apps. What is this? ... I have buttons to control it, so I don't need Back Home apps. I don't need this tab. All tabs sound nothing. I just need one slider to control the volume of the phone remotely, and that's it. The rest of the controls are on screen ... the screen of the phone itself. Nothing to press remotely here. My issue is that my phone is playing sound somewhere in distance. I can control that, and the full volume pre-fader is coming here. Very simple".
+
+## 13.11.2026, Marko, for v6 (via the coordinator)
+
+"I need more controls beside this volume thing. I need to control orientation of the phone: landscape, portrait. That's it".
