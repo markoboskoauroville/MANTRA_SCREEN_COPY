@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 10
+let VERSION = 11
 
 final class Tab {
     let phoneId: String
@@ -387,7 +387,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let real = real else { return }
                 let cap = t.session.captureRotation
                 var newCap = cap
-                if want { if real == 1 { newCap = 0 } else if cap == 0 { newCap = 90 } }
+                if want { if real == 1 { newCap = 0 } else if cap == 0 { newCap = 270 } }
                 else { newCap = 0 }
                 if newCap != cap {
                     logLine("rotation reconcile \(ser): phone \(real), want landscape \(want), capture \(cap) -> \(newCap)")
