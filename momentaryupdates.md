@@ -43,3 +43,7 @@
 ## 13.11.2026, Marko, one rotation button (via the coordinator), v16
 
 "Again we are doing the same mistake. Portrait and landscape are two buttons and it can be only one button. Please fix that. And we can also always make a symbol which we did on the application for MPA. The same symbol used here."
+
+## 13.11.2026, Marko, rotate everything (via the coordinator), v18
+
+"The problem with rotating the screen in screen copy mantra is that actual user interface of the screen copy is not rotating. Which is stupid. It's just the picture is rotating. Everything should rotate. Same experience as on a real phone."

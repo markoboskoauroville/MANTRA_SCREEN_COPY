@@ -150,7 +150,7 @@ final class Session {
 
         let sh = Process()
         sh.executableURL = URL(fileURLWithPath: ADB)
-        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 audio_codec=raw audio_source=playback audio_dup=true\(captureRotation != 0 ? " capture_orientation=\(captureRotation)" : "") max_size=1920 video_bit_rate=8000000 max_fps=60"
+        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 audio_codec=raw audio_source=playback audio_dup=true max_size=1920 video_bit_rate=8000000 max_fps=60"
         sh.arguments = ["-s", serial, "shell", "CLASSPATH=\(remote) app_process / com.genymobile.scrcpy.Server 4.1 \(opts)"]
         let pipe = Pipe()
         sh.standardOutput = pipe; sh.standardError = pipe

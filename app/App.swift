@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 17
+let VERSION = 18
 
 final class Tab {
     let phoneId: String
@@ -55,7 +55,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.title = "Screen Copy (Mantra) v\(VERSION)"
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(white: 0.06, alpha: 1)
-        window.minSize = NSSize(width: 420, height: 560)
+        window.minSize = NSSize(width: 420, height: 320)
         window.delegate = self
         window.collectionBehavior = [.fullScreenPrimary]
         window.acceptsMouseMovedEvents = true
@@ -372,41 +372,34 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         wantLandscape[t.phoneId] = (n == 1)
         let ser = t.session.serial
         DispatchQueue.global().async { [weak self] in
+            // the whole phone turns, like in the hand: rotation locked to 0 or 1, auto-rotate stays off, and in landscape the display
+            // is asked to ignore the portrait-only requests of apps and of the home screen (Android 12+)
             _ = adb(ser, ["shell", "settings", "put", "system", "accelerometer_rotation", "0"], timeout: 8)
+            _ = adb(ser, ["shell", "cmd", "window", "set-ignore-orientation-request", "-d", "0", n == 1 ? "true" : "false"], timeout: 8)
             _ = adb(ser, ["shell", "cmd", "window", "user-rotation", "-d", "0", "lock", "\(n)"], timeout: 8)
-            logLine("rotation \(ser): lock \(n)")
-            self?.lastReconcile = Date()   // give the phone time to turn before it is read back
+            let real = self?.realRotation(ser)
+            logLine("rotation \(ser): lock \(n), ignore-orientation-request \(n == 1), real rotation after: \(real.map { String($0) } ?? "?")")
         }
     }
-    /// Every ~3 s: compare what was asked with what the phone really does, and turn the picture only when the phone does not.
-    func reconcileRotation() {
-        if rotBusy || Date().timeIntervalSince(lastReconcile) < 3 { return }
-        guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty, tabs[active].session.status == "LIVE" else { return }
-        let t = tabs[active]
-        guard let want = wantLandscape[t.phoneId] else { return }
-        lastReconcile = Date(); rotBusy = true
-        let ser = t.session.serial
-        DispatchQueue.global().async { [weak self] in
-            let real = self?.realRotation(ser)
-            DispatchQueue.main.async {
-                self?.rotBusy = false
-                guard let real = real else { return }
-                let cap = t.session.captureRotation
-                var newCap = cap
-                if want { if real == 1 { newCap = 0 } else if cap == 0 { newCap = 270 } }
-                else { newCap = 0 }
-                if newCap != cap {
-                    logLine("rotation reconcile \(ser): phone \(real), want landscape \(want), capture \(cap) -> \(newCap)")
-                    t.session.captureRotation = newCap
-                    t.session.reconnect()
-                }
-            }
-        }
+    /// The window turns with the phone: its shape follows the picture, around the same centre.
+    var lastLand: Bool?
+    func reshapeWindow(_ land: Bool) {
+        if lastLand == nil { lastLand = land; return }
+        if lastLand == land { return }
+        lastLand = land
+        if immersive || window.styleMask.contains(.fullScreen) { return }
+        let f = window.frame
+        let vis = window.screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1600, height: 1000)
+        let w = min(f.height, vis.width), h = min(f.width, vis.height)
+        var nf = NSRect(x: f.midX - w / 2, y: f.midY - h / 2, width: w, height: h)
+        nf.origin.x = max(vis.minX, min(nf.origin.x, vis.maxX - w)); nf.origin.y = max(vis.minY, min(nf.origin.y, vis.maxY - h))
+        window.setFrame(nf, display: true, animate: true)
     }
     func paintRotation() {
         guard let s = cur(), s.width > 0 else { return }
         let land = s.width > s.height
         if rotBtn.landscape != land { rotBtn.landscape = land }
+        reshapeWindow(land)
     }
 
     @objc func volumeChanged() {
@@ -479,7 +472,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshStatus()
         pollVolume()
         paintRotation()
-        reconcileRotation()
         if immersive && !cursorHidden && Date().timeIntervalSince(lastMouse) > 2 { NSCursor.hide(); cursorHidden = true }
         refreshTabs()
         if Date().timeIntervalSince(lastLog) > 5 {
