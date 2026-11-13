@@ -1,0 +1,29 @@
+# TEMPLATE mac-swift.yml from MANTRA_MANIFEST/workflows (source: G815_LIGHTS build.yml). Change APP (the .app name in
+# build/) and VERSION_FILE. build.sh must sign with "${SIGN:-Mantra Apps}"; here SIGN=- (ad hoc). On the Mac the
+# release zip is downloaded, unzipped into /Applications and re-signed "Mantra Apps" (workflows/README.md, Install).
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  APP: "Screen Copy (Mantra)"
+  VERSION_FILE: app/App.swift
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: SIGN=- NO_INSTALL=1 ./build.sh
+      - name: Pack
+        run: cd build && ditto -c -k --keepParent "$APP.app" app.zip
+      - name: Release (Latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(sed -n 's/^let VERSION = \([0-9]*\)/\1/p' "$VERSION_FILE")
+          if gh release view "v$V" >/dev/null 2>&1; then gh release upload "v$V" build/app.zip --clobber
+          else gh release create "v$V" build/app.zip --target "$GITHUB_SHA" --latest --title "$APP v$V" --notes "$(git log -1 --format=%s)"; fi
