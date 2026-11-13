@@ -127,8 +127,8 @@ final class VideoView: NSView {
 
 /// The tab strip: one tab per phone (title, close), then +. Always centred.
 final class TabBar: NSView {
-    var titles: [String] = [] { didSet { rebuild() } }
-    var selected = 0 { didSet { rebuild() } }
+    var titles: [String] = [] { didSet { if titles != oldValue { rebuild() } } }
+    var selected = 0 { didSet { if selected != oldValue { rebuild() } } }
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
     var onAdd: ((NSView) -> Void)?

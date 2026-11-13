@@ -8,7 +8,10 @@ import Darwin
 /// (video, audio, control), shows the video in an AVSampleBufferDisplayLayer (hardware H.264 decode),
 /// plays the sound through AudioOut and sends touches/keys back. Runs in the background whether or not its tab is shown.
 final class Session {
-    let serial: String
+    let phoneId: String
+    private(set) var serial = ""                 // the route (adb address) in use now
+    var forced: String?                           // a route chosen by hand
+    private let routes: () -> [String]
     let layer = AVSampleBufferDisplayLayer()
     let audio = AudioOut()
     var onChange: (() -> Void)?                // status or size changed (called on the main queue)
@@ -33,9 +36,12 @@ final class Session {
     private var fmt: CMVideoFormatDescription?
     private var touchDown = false
     var clipboardSeq: UInt64 = 1
+    /// false (default): the phone stays silent, its sound goes only to the Mac (audio_source=playback, no audio_dup).
+    var phoneSpeaks = false
 
-    init(serial: String) {
-        self.serial = serial
+    init(phoneId: String, routes: @escaping () -> [String]) {
+        self.phoneId = phoneId
+        self.routes = routes
         layer.videoGravity = .resizeAspect
         layer.backgroundColor = NSColorBlack
     }
@@ -43,6 +49,12 @@ final class Session {
     func start() {
         running = true
         Thread.detachNewThread { [weak self] in self?.loop() }
+    }
+
+    /// Restart the stream (used when "also play on the phone" is switched).
+    func reconnect() {
+        for fd in [vfd, afd, cfd] where fd >= 0 { Darwin.shutdown(fd, SHUT_RDWR) }
+        if let sh = shell, sh.isRunning { sh.terminate() }
     }
 
     func stop() {
@@ -59,12 +71,19 @@ final class Session {
     // MARK: connect loop
     private func loop() {
         while running {
-            set("CONNECTING")
-            let ended = connectOnce()
-            teardown()
+            let rs = forced.map { [$0] } ?? routes()
+            if rs.isEmpty { set("SEARCHING"); for _ in 0..<10 where running { usleep(100_000) }; continue }
+            var was = false
+            for r in rs where running {
+                serial = r
+                set("CONNECTING")
+                let ok = connectOnce()
+                teardown()
+                if ok { was = true; break }          // it had been live and dropped: begin again from the best route
+            }
             if !running { break }
-            set(ended ? "RECONNECTING" : "NOT REACHABLE")
-            for _ in 0..<30 where running { usleep(100_000) }
+            set(was ? "RECONNECTING" : "NOT REACHABLE")
+            for _ in 0..<15 where running { usleep(100_000) }
         }
     }
 
@@ -124,7 +143,7 @@ final class Session {
 
         let sh = Process()
         sh.executableURL = URL(fileURLWithPath: ADB)
-        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 audio_codec=raw audio_source=output max_size=1920 video_bit_rate=8000000 max_fps=60"
+        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 audio_codec=raw audio_source=playback\(phoneSpeaks ? " audio_dup=true" : "") max_size=1920 video_bit_rate=8000000 max_fps=60"
         sh.arguments = ["-s", serial, "shell", "CLASSPATH=\(remote) app_process / com.genymobile.scrcpy.Server 4.1 \(opts)"]
         let pipe = Pipe()
         sh.standardOutput = pipe; sh.standardError = pipe

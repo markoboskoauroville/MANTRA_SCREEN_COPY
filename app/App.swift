@@ -3,14 +3,19 @@ import AppKit
 let VERSION = 1
 
 final class Tab {
-    let serial: String
-    var title: String
+    let phoneId: String
+    var name: String
     let session: Session
     let view: VideoView
-    init(serial: String, title: String) {
-        self.serial = serial; self.title = title
-        session = Session(serial: serial)
+    init(phoneId: String, name: String) {
+        self.phoneId = phoneId; self.name = name
+        let pid = phoneId
+        session = Session(phoneId: phoneId, routes: { Discovery.shared.routes(pid) })
         view = VideoView(session: session)
+    }
+    var title: String {
+        let l = session.serial.isEmpty ? "…" : linkName2(session.serial)
+        return "\(name) · \(l)"
     }
 }
 
@@ -23,56 +28,88 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow!
     let root = Root()
     let tabBar = TabBar()
+    let panel = PhonesPanel()
+    var panelShown = true
     var tabs: [Tab] = []
     var active = 0
     var allTabs = false
-    var muted = false
-    var volume: Float = 1
-    let hl1 = hairline(), hl2 = hairline()
+    let hl1 = hairline()
     var navButtons: [NSView] = []
     var soundRow: [NSView] = []
-    let thisBtn: WordButton, allBtn: WordButton, muteBtn: WordButton
+    let thisBtn: WordButton, allBtn: WordButton, muteBtn: WordButton, spkBtn: WordButton
     let slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
     let status = label("", size: 11)
     var timer: Timer?
+    let pvNames: [(String, Int)] = [("MEDIA", 3), ("RING", 2), ("ALARM", 4), ("CALL", 0)]
+    var pvStream = 3
+    var pvAll = false
+    var pvBtns: [WordButton] = []
+    var pvRow: [NSView] = []
+    var pvRow2: [NSView] = []
+    let minusBtn = WordButton("−", target: nil, action: nil)
+    let plusBtn = WordButton("+", target: nil, action: nil)
+    let pvValue = label("— / —", size: 12, color: BRIGHT)
+    let pvTitle = label("PHONE VOLUME (THE PHONE'S OWN, NOT WHAT YOU HEAR)", size: 10)
+    let pvThis = WordButton("THIS PHONE", target: nil, action: nil)
+    let pvAllBtn = WordButton("ALL PHONES", target: nil, action: nil)
+    var startMuted = false
     var lastLog = Date()
+    var autoOpened = false
 
     override init() {
         thisBtn = WordButton("THIS TAB", target: nil, action: nil)
         allBtn = WordButton("ALL TABS", target: nil, action: nil)
         muteBtn = WordButton("SOUND ON", target: nil, action: nil)
+        spkBtn = WordButton("PHONE SILENT", target: nil, action: nil)
         super.init()
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
-        muted = CommandLine.arguments.contains("--muted")
+        startMuted = CommandLine.arguments.contains("--muted")
         buildMenu()
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 900), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 960), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Screen Copy (Mantra) v\(VERSION)"
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(white: 0.06, alpha: 1)
-        window.minSize = NSSize(width: 360, height: 560)
+        window.minSize = NSSize(width: 480, height: 680)
         window.delegate = self
         window.contentView = root
         root.owner = self
         root.wantsLayer = true
-        root.addSubview(tabBar); root.addSubview(hl1); root.addSubview(hl2)
+        root.addSubview(tabBar); root.addSubview(hl1)
+        root.addSubview(panel)
         tabBar.onSelect = { [weak self] i in self?.select(i) }
         tabBar.onClose = { [weak self] i in self?.close(i) }
-        tabBar.onAdd = { [weak self] v in self?.addMenu(v) }
+        tabBar.onAdd = { [weak self] _ in self?.togglePanel() }
+        panel.onOpen = { [weak self] id in self?.openPhone(id) }
+        panel.onRoute = { [weak self] id, a in self?.forceRoute(id, a) }
+        panel.onTcpip = { [weak self] id in self?.enableTcpip(id) }
+        panel.onScan = { Discovery.shared.scanNow() }
+        panel.onAddr = { [weak self] in self?.addAddress() }
+        panel.onPair = { [weak self] in self?.pairPhone() }
 
         let back = WordButton("BACK", target: self, action: #selector(navBack))
         let home = WordButton("HOME", target: self, action: #selector(navHome))
         let apps = WordButton("APPS", target: self, action: #selector(navApps))
-        navButtons = pipes([back, home, apps])
+        navButtons = pipes([back, home, apps]) + [label("|", size: 12, color: DIM), spkBtn]
         thisBtn.target = self; thisBtn.action = #selector(modeThis)
         allBtn.target = self; allBtn.action = #selector(modeAll)
         muteBtn.target = self; muteBtn.action = #selector(toggleMute)
+        spkBtn.target = self; spkBtn.action = #selector(toggleSpeaks)
         slider.target = self; slider.action = #selector(volumeChanged)
-        slider.setAccessibilityLabel("Volume of this tab")
+        slider.setAccessibilityLabel("Volume of this tab on the Mac")
         soundRow = pipes([thisBtn, allBtn]) + [muteBtn, slider]
-        for v in navButtons + soundRow { root.addSubview(v) }
+        for (i, p) in pvNames.enumerated() {
+            let b = WordButton(p.0, target: self, action: #selector(pvPick(_:))); b.tag = p.1; pvBtns.append(b)
+            if i > 0 { pvRow.append(label("|", size: 12, color: DIM)) }
+            pvRow.append(b)
+        }
+        minusBtn.target = self; minusBtn.action = #selector(pvStep(_:)); minusBtn.tag = -1; minusBtn.setAccessibilityLabel("Phone volume down")
+        plusBtn.target = self; plusBtn.action = #selector(pvStep(_:)); plusBtn.tag = 1; plusBtn.setAccessibilityLabel("Phone volume up")
+        pvThis.target = self; pvThis.action = #selector(pvScopeThis); pvAllBtn.target = self; pvAllBtn.action = #selector(pvScopeAll)
+        pvRow2 = [minusBtn, pvValue, plusBtn] + pipes([pvThis, pvAllBtn])
+        for v in navButtons + soundRow + pvRow + pvRow2 + [pvTitle] { root.addSubview(v) }
         root.addSubview(status)
         paintMode()
 
@@ -80,6 +117,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         logLine("started v\(VERSION), window number \(window.windowNumber)")
+        Discovery.shared.onChange = { [weak self] in self?.discoveryChanged() }
+        Discovery.shared.start()
         restore()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
     }
@@ -113,21 +152,26 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: layout
     func layoutAll() {
         let w = root.bounds.width, h = root.bounds.height
-        let tabH: CGFloat = 36, bottom: CGFloat = 96
+        let tabH: CGFloat = 36, bottom: CGFloat = 176
         tabBar.frame = NSRect(x: 0, y: h - tabH, width: w, height: tabH)
         hl1.frame = NSRect(x: 0, y: bottom, width: w, height: 1)
         let area = NSRect(x: 0, y: bottom + 1, width: w, height: max(0, h - tabH - bottom - 1))
         for t in tabs { t.view.frame = area }
+        panel.frame = area
         center(navButtons, y: bottom - 28, spacing: 12)
         center(soundRow, y: bottom - 56, spacing: 12)
+        pvTitle.frame = NSRect(x: 12, y: bottom - 80, width: w - 24, height: 16)
+        center(pvRow, y: bottom - 104, spacing: 10)
+        center(pvRow2, y: bottom - 130, spacing: 10)
         status.frame = NSRect(x: 12, y: 8, width: w - 24, height: 18)
-        hl2.frame = .zero
     }
     func center(_ views: [NSView], y: CGFloat, spacing: CGFloat) {
         var sizes: [NSSize] = []
         for v in views {
             if v === slider { sizes.append(NSSize(width: 110, height: 18)) }
             else if v === muteBtn { sizes.append(NSSize(width: 74, height: 20)) }
+            else if v === pvValue { sizes.append(NSSize(width: 70, height: 20)) }
+            else if v === spkBtn { sizes.append(NSSize(width: 120, height: 20)) }
             else { v.sizeToFit(); sizes.append(NSSize(width: ceil(v.frame.width) + 2, height: 20)) }
         }
         let total = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, views.count - 1))
@@ -138,36 +182,64 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // MARK: panel and discovery
+    func togglePanel() { panelShown.toggle(); panel.isHidden = !panelShown; if panelShown { reloadPanel() } }
+    func reloadPanel() {
+        var m: [String: (open: Bool, active: String?, forced: String?)] = [:]
+        for t in tabs { m[t.phoneId] = (true, t.session.serial.isEmpty ? nil : t.session.serial, t.session.forced) }
+        panel.reload(phones: Discovery.shared.all(), tabs: m, searching: !Discovery.shared.firstDone)
+    }
+    func discoveryChanged() {
+        for t in tabs { if let n = Discovery.shared.name(t.phoneId) { t.name = n } }
+        reloadPanel(); refreshTabs(); save()
+        if !autoOpened && Discovery.shared.firstDone {
+            autoOpened = true
+            if tabs.isEmpty { for p in Discovery.shared.all() { addTab(phoneId: p.id, name: p.name) } }
+        }
+    }
+
     // MARK: tabs
-    func addTab(serial: String, title: String?) {
-        if tabs.contains(where: { $0.serial == serial }) { return }
-        let t = Tab(serial: serial, title: title ?? "\(linkName(serial)) \(serial)")
-        t.session.audio.muted = muted
-        t.session.audio.volume = volume
-        t.session.onChange = { [weak self] in self?.refreshStatus() }
+    @discardableResult
+    func addTab(phoneId: String, name: String) -> Tab {
+        if let t = tabs.first(where: { $0.phoneId == phoneId }) { return t }
+        let t = Tab(phoneId: phoneId, name: name)
+        t.session.audio.muted = startMuted
+        t.session.phoneSpeaks = (UserDefaults.standard.stringArray(forKey: "speaks") ?? []).contains(phoneId)
+        t.session.onChange = { [weak self] in self?.refreshStatus(); self?.refreshTabs() }
         tabs.append(t)
-        root.addSubview(t.view)
+        root.addSubview(t.view, positioned: .below, relativeTo: panel)
         t.view.showNote("CONNECTING")
         t.session.start()
-        if title == nil {
-            DispatchQueue.global().async { [weak self] in
-                let name = phoneName(serial) + " · " + linkName(serial)
-                DispatchQueue.main.async { t.title = name; self?.save(); self?.refreshTabs() }
-            }
-        }
-        refreshTabs(); save()
+        save()
         select(tabs.count - 1)
+        return t
+    }
+
+    func openPhone(_ id: String) {
+        if let i = tabs.firstIndex(where: { $0.phoneId == id }) { select(i) }
+        else { addTab(phoneId: id, name: Discovery.shared.name(id) ?? id) }
+        panelShown = false; panel.isHidden = true
+    }
+
+    func forceRoute(_ id: String, _ addr: String) {
+        openPhone(id)
+        guard let t = tabs.first(where: { $0.phoneId == id }) else { return }
+        t.session.forced = (t.session.forced == addr) ? nil : addr
+        t.session.reconnect()
+        reloadPanel()
     }
 
     func select(_ i: Int) {
         guard i >= 0, i < tabs.count else { return }
         active = i
         let t = tabs[i]
-        root.addSubview(t.view, positioned: .above, relativeTo: nil)
+        root.addSubview(t.view, positioned: .below, relativeTo: panel)
+        for o in tabs where o !== t { root.addSubview(o.view, positioned: .below, relativeTo: t.view) }
         t.session.sendResetVideo()
-        applyAudio()
+        applyAudio(); paintMode()
         refreshTabs(); refreshStatus()
         window.makeFirstResponder(t.view)
+        refreshPhoneVol()
     }
 
     func close(_ i: Int) {
@@ -176,8 +248,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         t.session.stop(); t.view.removeFromSuperview()
         active = min(active, max(0, tabs.count - 1))
         save(); refreshTabs()
-        if !tabs.isEmpty { select(active) }
-        refreshStatus()
+        if !tabs.isEmpty { select(active) } else { panelShown = true; panel.isHidden = false }
+        refreshStatus(); reloadPanel()
     }
 
     func refreshTabs() {
@@ -189,67 +261,78 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for (i, t) in tabs.enumerated() {
             let on = allTabs || i == active
             if t.session.audio.enabled != on { t.session.audio.enabled = on; if !on { t.session.audio.silence() } }
-            t.session.audio.muted = muted
         }
     }
 
     // MARK: persistence
     func save() {
-        UserDefaults.standard.set(tabs.map { $0.serial }, forKey: "serials")
-        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: tabs.map { ($0.serial, $0.title) }), forKey: "titles")
+        UserDefaults.standard.set(tabs.map { $0.phoneId }, forKey: "phones")
+        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: tabs.map { ($0.phoneId, $0.name) }), forKey: "names")
     }
     func restore() {
-        let serials = UserDefaults.standard.stringArray(forKey: "serials") ?? []
-        let titles = UserDefaults.standard.dictionary(forKey: "titles") as? [String: String] ?? [:]
-        if !serials.isEmpty {
-            for s in serials { addTab(serial: s, title: titles[s]) }
+        let ids = UserDefaults.standard.stringArray(forKey: "phones") ?? []
+        let names = UserDefaults.standard.dictionary(forKey: "names") as? [String: String] ?? [:]
+        if !ids.isEmpty {
+            autoOpened = true
+            for id in ids { addTab(phoneId: id, name: names[id] ?? id) }
             select(0)
-            return
-        }
-        DispatchQueue.global().async { [weak self] in
-            // first start: one tab per physical phone, USB preferred
-            var seen: [String: String] = [:]
-            for e in adbDevices().sorted(by: { !$0.serial.contains(":") && $1.serial.contains(":") }) where e.state == "device" {
-                let id = physicalId(e.serial)
-                if seen[id] == nil { seen[id] = e.serial }
-            }
-            DispatchQueue.main.async { for s in seen.values.sorted() { self?.addTab(serial: s, title: nil) }; self?.select(0) }
+            panelShown = false; panel.isHidden = true
         }
     }
 
-    // MARK: adding
-    func addMenu(_ from: NSView) {
-        DispatchQueue.global().async { [weak self] in
-            let list = adbDevices().filter { $0.state == "device" }
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                let m = NSMenu()
-                for e in list where !self.tabs.contains(where: { $0.serial == e.serial }) {
-                    let it = NSMenuItem(title: "\(e.model.replacingOccurrences(of: "_", with: " ")) · \(linkName(e.serial)) · \(e.serial)", action: #selector(self.addFromMenu(_:)), keyEquivalent: "")
-                    it.representedObject = e.serial; it.target = self; m.addItem(it)
-                }
-                if m.items.isEmpty { let it = NSMenuItem(title: "No other phone on adb", action: nil, keyEquivalent: ""); it.isEnabled = false; m.addItem(it) }
-                m.addItem(.separator())
-                let a = NSMenuItem(title: "Add an address (Wi-Fi or Tailscale)…", action: #selector(self.addAddress), keyEquivalent: "")
-                a.target = self; m.addItem(a)
-                m.popUp(positioning: nil, at: NSPoint(x: 0, y: from.bounds.height), in: from)
-            }
-        }
-    }
-    @objc func addFromMenu(_ s: NSMenuItem) { if let x = s.representedObject as? String { addTab(serial: x, title: nil) } }
-    @objc func addAddress() {
+    // MARK: adding by hand
+    func addAddress() {
         let a = NSAlert()
         a.messageText = "Phone address"
-        a.informativeText = "Wi-Fi adb or Tailscale, like 10.146.4.95:5555 or 100.70.23.53:5555"
+        a.informativeText = "Only if the scan did not find it. Wi-Fi adb or Tailscale, like 10.146.4.95:5555"
         let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         f.placeholderString = "10.0.0.5:5555"
         a.accessoryView = f
-        a.addButton(withTitle: "ADD"); a.addButton(withTitle: "CANCEL")
+        a.addButton(withTitle: "CONNECT"); a.addButton(withTitle: "CANCEL")
         if a.runModal() == .alertFirstButtonReturn {
             var s = f.stringValue.trimmingCharacters(in: .whitespaces)
             if s.isEmpty { return }
             if !s.contains(":") { s += ":5555" }
-            addTab(serial: s, title: nil)
+            DispatchQueue.global().async { let r = adb(nil, ["connect", s], timeout: 10); logLine("adb connect \(s): \(r)"); Discovery.shared.scanNow() }
+        }
+    }
+
+    func pairPhone() {
+        let a = NSAlert()
+        a.messageText = "Pair a new phone"
+        a.informativeText = "On the phone: Developer options, Wireless debugging, Pair device with pairing code. Type the address and the six-digit code it shows."
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 56))
+        let f1 = NSTextField(frame: NSRect(x: 0, y: 32, width: 260, height: 24)); f1.placeholderString = "address:port, like 10.0.0.5:37123"
+        let f2 = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24)); f2.placeholderString = "pairing code"
+        box.addSubview(f1); box.addSubview(f2)
+        a.accessoryView = box
+        a.addButton(withTitle: "PAIR"); a.addButton(withTitle: "CANCEL")
+        if a.runModal() == .alertFirstButtonReturn {
+            let addr = f1.stringValue.trimmingCharacters(in: .whitespaces), code = f2.stringValue.trimmingCharacters(in: .whitespaces)
+            if addr.isEmpty || code.isEmpty { return }
+            DispatchQueue.global().async {
+                let r = adb(nil, ["pair", addr, code], timeout: 20)
+                logLine("adb pair: \(r)")
+                Discovery.shared.scanNow()
+                DispatchQueue.main.async { self.panel.heading.stringValue = r.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
+            }
+        }
+    }
+
+    /// A phone that is on USB only: make it reachable over Wi-Fi and Tailscale as well (adb tcpip 5555).
+    func enableTcpip(_ id: String) {
+        guard let usb = Discovery.shared.all().first(where: { $0.id == id })?.routes.first(where: { $0.link == "USB" })?.addr else { return }
+        panel.heading.stringValue = "SWITCHING WI-FI ACCESS ON…"
+        DispatchQueue.global().async {
+            logLine("tcpip: \(adb(usb, ["tcpip", "5555"], timeout: 15))")
+            var ip = ""
+            for _ in 0..<8 where ip.isEmpty {
+                sleep(2)
+                let out = adb(usb, ["shell", "ip", "-f", "inet", "addr", "show", "wlan0"], timeout: 8)
+                if let r = out.range(of: "inet ") { ip = String(out[r.upperBound...].prefix(while: { $0 != "/" && $0 != " " })) }
+            }
+            if !ip.isEmpty { logLine("tcpip connect \(ip): \(adb(nil, ["connect", "\(ip):5555"], timeout: 10))") }
+            Discovery.shared.scanNow()
         }
     }
 
@@ -258,25 +341,91 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func navBack() { cur()?.key(4) }
     @objc func navHome() { cur()?.key(3) }
     @objc func navApps() { cur()?.key(187) }
+    @objc func toggleSpeaks() {
+        guard let t = tabs.indices.contains(active) ? tabs[active] : nil else { return }
+        t.session.phoneSpeaks.toggle()
+        var l = UserDefaults.standard.stringArray(forKey: "speaks") ?? []
+        l.removeAll { $0 == t.phoneId }
+        if t.session.phoneSpeaks { l.append(t.phoneId) }
+        UserDefaults.standard.set(l, forKey: "speaks")
+        paintMode(); t.session.reconnect()
+    }
     @objc func modeThis() { allTabs = false; paintMode(); applyAudio() }
     @objc func modeAll() { allTabs = true; paintMode(); applyAudio() }
-    func paintMode() { thisBtn.normal = allTabs ? DIM : ACCENT; allBtn.normal = allTabs ? ACCENT : DIM; muteBtn.normal = muted ? DIM : BRIGHT; muteBtn.word = muted ? "MUTED" : "SOUND ON" }
-    @objc func toggleMute() { muted.toggle(); paintMode(); applyAudio() }
-    @objc func volumeChanged() { volume = slider.floatValue; if active < tabs.count { tabs[active].session.audio.volume = volume } }
+    var muted: Bool { cur()?.audio.muted ?? false }
+    func paintMode() {
+        if let s = cur() { slider.floatValue = s.audio.volume }
+        for b in pvBtns { b.normal = b.tag == pvStream ? ACCENT : DIM }
+        pvThis.normal = pvAll ? DIM : ACCENT; pvAllBtn.normal = pvAll ? ACCENT : DIM
+        thisBtn.normal = allTabs ? DIM : ACCENT; allBtn.normal = allTabs ? ACCENT : DIM
+        muteBtn.normal = muted ? DIM : BRIGHT; muteBtn.word = muted ? "MUTED" : "SOUND ON"
+        let sp = cur()?.phoneSpeaks ?? false
+        spkBtn.word = sp ? "PHONE SPEAKS" : "PHONE SILENT"; spkBtn.normal = sp ? ACCENT : BRIGHT
+    }
+    @objc func toggleMute() { if let s = cur() { s.audio.muted.toggle() }; paintMode() }
+    @objc func volumeChanged() { cur()?.audio.volume = slider.floatValue }
 
-    func tick() { refreshStatus(); if Date().timeIntervalSince(lastLog) > 5 { lastLog = Date(); for t in tabs { logLine("\(t.title): \(t.session.status) \(t.session.width)x\(t.session.height) frames \(t.session.framesTotal) fps \(t.session.fps) \(t.session.audioState) packets \(t.session.audio.packets) level \(Int(t.session.audio.levelDb)) dB") } } }
+    // phone volume: the phone's own, never what the Mac hears (we listen pre-fader)
+    func parseVol(_ s: String) -> (Int, Int)? {
+        guard let r = s.range(of: "volume is ") else { return nil }
+        let rest = s[r.upperBound...]
+        let v = Int(rest.prefix(while: { $0.isNumber })) ?? -1
+        guard v >= 0, let r2 = rest.range(of: "..") else { return nil }
+        let mx = Int(rest[r2.upperBound...].prefix(while: { $0.isNumber })) ?? -1
+        return mx >= 0 ? (v, mx) : nil
+    }
+    func getVol(_ serial: String, _ stream: Int) -> (Int, Int)? {
+        parseVol(adb(serial, ["shell", "cmd", "media_session", "volume", "--stream", "\(stream)", "--get"], timeout: 10))
+    }
+    func refreshPhoneVol() {
+        guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty else { return }
+        let serial = tabs[active].session.serial, st = pvStream
+        DispatchQueue.global().async { [weak self] in
+            let r = self?.getVol(serial, st)
+            DispatchQueue.main.async { self?.pvValue.stringValue = r.map { "\($0.0) / \($0.1)" } ?? "— / —" }
+        }
+    }
+    @objc func pvPick(_ s: NSButton) { pvStream = s.tag; paintMode(); refreshPhoneVol() }
+    @objc func pvScopeThis() { pvAll = false; paintMode() }
+    @objc func pvScopeAll() { pvAll = true; paintMode() }
+    @objc func pvStep(_ s: NSButton) {
+        let delta = s.tag, st = pvStream
+        let targets = pvAll ? tabs.map { $0.session.serial } : (tabs.indices.contains(active) ? [tabs[active].session.serial] : [])
+        let activeSerial = tabs.indices.contains(active) ? tabs[active].session.serial : ""
+        DispatchQueue.global().async { [weak self] in
+            guard let self = self else { return }
+            var shown: (Int, Int)?
+            for ser in targets where !ser.isEmpty {
+                guard let (v, mx) = self.getVol(ser, st) else { continue }
+                let nv = max(0, min(mx, v + delta))
+                _ = adb(ser, ["shell", "cmd", "media_session", "volume", "--stream", "\(st)", "--set", "\(nv)"], timeout: 10)
+                let back = self.getVol(ser, st)
+                logLine("phone volume \(ser) stream \(st): \(v) -> \(nv), read back \(back.map { "\($0.0)" } ?? "?")")
+                if ser == activeSerial { shown = back }
+            }
+            DispatchQueue.main.async { if let r = shown { self.pvValue.stringValue = "\(r.0) / \(r.1)" } }
+        }
+    }
+
+    func tick() {
+        refreshStatus()
+        if Date().timeIntervalSince(lastLog) > 5 {
+            lastLog = Date()
+            for t in tabs { logLine("\(t.title): \(t.session.status) \(t.session.width)x\(t.session.height) frames \(t.session.framesTotal) fps \(t.session.fps) \(t.session.audioState) packets \(t.session.audio.packets) level \(Int(t.session.audio.levelDb)) dB") }
+        }
+    }
 
     func refreshStatus() {
         for t in tabs { t.view.showNote(t.session.status == "LIVE" ? nil : t.session.status) }
-        guard let t = tabs.indices.contains(active) ? tabs[active] : nil else { status.stringValue = "ADD A PHONE WITH +"; return }
+        guard let t = tabs.indices.contains(active) ? tabs[active] : nil else { status.stringValue = "NO PHONE OPEN"; return }
         let s = t.session
         let db = s.audio.levelDb <= -100 ? "silent" : "\(Int(s.audio.levelDb)) dB"
-        status.stringValue = "\(s.width)×\(s.height) · \(s.fps) fps · \(s.audioState) \(db)"
+        status.stringValue = "\(s.width)×\(s.height) · \(s.fps) fps · \(s.audioState) \(db) · PRE-FADER"
     }
 
     func application(_ app: NSApplication, open urls: [URL]) {
         for u in urls where u.scheme == "screencopy" {
-            if u.host == "tab", let n = Int(u.lastPathComponent) { select(n - 1) }
+            if u.host == "tab", let n = Int(u.lastPathComponent) { panelShown = false; panel.isHidden = true; select(n - 1) }
             if u.host == "window" { logLine("window number \(window.windowNumber)") }
         }
     }
