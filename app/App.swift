@@ -32,52 +32,31 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var panelShown = true
     var tabs: [Tab] = []
     var active = 0
-    var allTabs = false
     let hl1 = hairline()
     var navButtons: [NSView] = []
-    var soundRow: [NSView] = []
     var sliderRow: [NSView] = []
-    let thisBtn: WordButton, allBtn: WordButton, muteBtn: WordButton, spkBtn: WordButton
-    let slider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let pvValue = label("— / —", size: 12, color: BRIGHT)
     let status = label("", size: 11)
     var timer: Timer?
-    let pvNames: [(String, Int)] = [("MEDIA", 3), ("RING", 2), ("ALARM", 4), ("CALL", 0)]
-    var pvStream = 3
-    var pvAll = false
-    var pvBtns: [WordButton] = []
-    var pvRow: [NSView] = []
-    var pvRow2: [NSView] = []
-    let minusBtn = WordButton("−", target: nil, action: nil)
-    let plusBtn = WordButton("+", target: nil, action: nil)
-    let pvValue = label("— / —", size: 12, color: BRIGHT)
-    let pvTitle = label("THE SLIDER SETS THE PHONE'S OWN VOLUME · WHAT YOU HEAR STAYS THE SAME", size: 10)
-    let pvThis = WordButton("THIS PHONE", target: nil, action: nil)
-    let pvAllBtn = WordButton("ALL PHONES", target: nil, action: nil)
-    var startMuted = false
     var lastLog = Date()
     var immersive = false
     var closedIds = Set<String>()
     var lastMouse = Date()
     var cursorHidden = false
     let immBtn = WordButton("IMMERSIVE", target: nil, action: nil)
-
-    override init() {
-        thisBtn = WordButton("THIS TAB", target: nil, action: nil)
-        allBtn = WordButton("ALL TABS", target: nil, action: nil)
-        muteBtn = WordButton("SOUND ON", target: nil, action: nil)
-        spkBtn = WordButton("PHONE SILENT", target: nil, action: nil)
-        super.init()
-    }
+    var lastUserVol = Date.distantPast
+    var volBusy = false
+    var lastVolPoll = Date.distantPast
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
-        startMuted = CommandLine.arguments.contains("--muted")
         buildMenu()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 960), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Screen Copy (Mantra) v\(VERSION)"
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(white: 0.06, alpha: 1)
-        window.minSize = NSSize(width: 480, height: 680)
+        window.minSize = NSSize(width: 420, height: 560)
         window.delegate = self
         window.collectionBehavior = [.fullScreenPrimary]
         window.acceptsMouseMovedEvents = true
@@ -96,39 +75,22 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.onAddr = { [weak self] in self?.addAddress() }
         panel.onPair = { [weak self] in self?.pairPhone() }
 
+        immBtn.target = self; immBtn.action = #selector(toggleImmersive)
         let back = WordButton("BACK", target: self, action: #selector(navBack))
         let home = WordButton("HOME", target: self, action: #selector(navHome))
         let apps = WordButton("APPS", target: self, action: #selector(navApps))
-        immBtn.target = self; immBtn.action = #selector(toggleImmersive)
-        navButtons = pipes([back, home, apps, immBtn]) + [label("|", size: 12, color: DIM), spkBtn]
-        thisBtn.target = self; thisBtn.action = #selector(modeThis)
-        allBtn.target = self; allBtn.action = #selector(modeAll)
-        muteBtn.target = self; muteBtn.action = #selector(toggleMute)
-        spkBtn.target = self; spkBtn.action = #selector(toggleSpeaks)
+        navButtons = pipes([back, home, apps, immBtn])
         slider.target = self; slider.action = #selector(volumeChanged)
-        slider.isContinuous = false
-        slider.numberOfTickMarks = 0
+        slider.isContinuous = true
         slider.setAccessibilityLabel("Phone volume")
-        soundRow = pipes([thisBtn, allBtn]) + [muteBtn]
         sliderRow = [slider, pvValue]
-        for (i, p) in pvNames.enumerated() {
-            let b = WordButton(p.0, target: self, action: #selector(pvPick(_:))); b.tag = p.1; pvBtns.append(b)
-            if i > 0 { pvRow.append(label("|", size: 12, color: DIM)) }
-            pvRow.append(b)
-        }
-        minusBtn.target = self; minusBtn.action = #selector(pvStep(_:)); minusBtn.tag = -1; minusBtn.setAccessibilityLabel("Phone volume down")
-        plusBtn.target = self; plusBtn.action = #selector(pvStep(_:)); plusBtn.tag = 1; plusBtn.setAccessibilityLabel("Phone volume up")
-        pvThis.target = self; pvThis.action = #selector(pvScopeThis); pvAllBtn.target = self; pvAllBtn.action = #selector(pvScopeAll)
-        pvRow2 = [minusBtn, plusBtn] + pipes([pvThis, pvAllBtn])
-        for v in navButtons + soundRow + sliderRow + pvRow + pvRow2 + [pvTitle] { root.addSubview(v) }
+        for v in navButtons + sliderRow { root.addSubview(v) }
         root.addSubview(status)
-        paintMode()
 
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         logLine("started v\(VERSION), window number \(window.windowNumber)")
-        if !UserDefaults.standard.bool(forKey: "speaksResetV3") { UserDefaults.standard.set([String](), forKey: "speaks"); UserDefaults.standard.set(true, forKey: "speaksResetV3") }
         NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .mouseMoved, .leftMouseDown]) { [weak self] e in
             guard let s = self else { return e }
             return s.monitor(e)
@@ -171,33 +133,27 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let w = root.bounds.width, h = root.bounds.height
         if immersive {
             for t in tabs { t.view.frame = root.bounds }
-            for v in [tabBar, hl1, panel, status, pvTitle] as [NSView] { v.isHidden = true }
-            for v in navButtons + soundRow + sliderRow + pvRow + pvRow2 { v.isHidden = true }
+            for v in [tabBar, hl1, panel, status] as [NSView] { v.isHidden = true }
+            for v in navButtons + sliderRow { v.isHidden = true }
             return
         }
-        tabBar.isHidden = false; hl1.isHidden = false; status.isHidden = false; pvTitle.isHidden = false; panel.isHidden = !panelShown
-        for v in navButtons + soundRow + sliderRow + pvRow + pvRow2 { v.isHidden = false }
-        let tabH: CGFloat = 36, bottom: CGFloat = 206
+        tabBar.isHidden = false; hl1.isHidden = false; status.isHidden = false; panel.isHidden = !panelShown
+        for v in navButtons + sliderRow { v.isHidden = false }
+        let tabH: CGFloat = 36, bottom: CGFloat = 96
         tabBar.frame = NSRect(x: 0, y: h - tabH, width: w, height: tabH)
         hl1.frame = NSRect(x: 0, y: bottom, width: w, height: 1)
         let area = NSRect(x: 0, y: bottom + 1, width: w, height: max(0, h - tabH - bottom - 1))
         for t in tabs { t.view.frame = area }
         panel.frame = area
-        center(navButtons, y: bottom - 28, spacing: 12)
-        center(soundRow, y: bottom - 56, spacing: 12)
-        center(sliderRow, y: bottom - 86, spacing: 12)
-        pvTitle.frame = NSRect(x: 12, y: bottom - 110, width: w - 24, height: 16)
-        center(pvRow, y: bottom - 134, spacing: 10)
-        center(pvRow2, y: bottom - 160, spacing: 24)
-        status.frame = NSRect(x: 12, y: 8, width: w - 24, height: 18)
+        center(navButtons, y: bottom - 32, spacing: 12)
+        center(sliderRow, y: bottom - 64, spacing: 12)
+        status.frame = NSRect(x: 12, y: 6, width: w - 24, height: 18)
     }
     func center(_ views: [NSView], y: CGFloat, spacing: CGFloat) {
         var sizes: [NSSize] = []
         for v in views {
-            if v === slider { sizes.append(NSSize(width: min(260, root.bounds.width - 140), height: 18)) }
-            else if v === muteBtn { sizes.append(NSSize(width: 74, height: 20)) }
+            if v === slider { sizes.append(NSSize(width: min(300, root.bounds.width - 140), height: 18)) }
             else if v === pvValue { sizes.append(NSSize(width: 70, height: 20)) }
-            else if v === spkBtn { sizes.append(NSSize(width: 120, height: 20)) }
             else { sizes.append(NSSize(width: fitW(v), height: 20)) }
         }
         let total = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, views.count - 1))
@@ -230,9 +186,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func addTab(phoneId: String, name: String, select sel: Bool = true) -> Tab {
         if let t = tabs.first(where: { $0.phoneId == phoneId }) { return t }
         let t = Tab(phoneId: phoneId, name: name)
-        t.session.audio.muted = startMuted
-        t.view.onDouble = { [weak self] in self?.toggleImmersive() }
-        t.session.phoneSpeaks = (UserDefaults.standard.stringArray(forKey: "speaks") ?? []).contains(phoneId)
+                t.view.onDouble = { [weak self] in self?.toggleImmersive() }
         t.session.onChange = { [weak self] in self?.refreshStatus(); self?.refreshTabs() }
         tabs.append(t)
         root.addSubview(t.view, positioned: .below, relativeTo: panel)
@@ -266,10 +220,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         root.addSubview(t.view, positioned: .below, relativeTo: panel)
         for o in tabs where o !== t { root.addSubview(o.view, positioned: .below, relativeTo: t.view) }
         t.session.sendResetVideo()
-        applyAudio(); paintMode()
+        applyAudio()
+        lastUserVol = .distantPast; lastVolPoll = .distantPast; pollVolume()
         refreshTabs(); refreshStatus()
         window.makeFirstResponder(t.view)
-        refreshPhoneVol()
     }
 
     func close(_ i: Int) {
@@ -287,13 +241,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tabBar.live = tabs.map { $0.session.status == "LIVE" }
         tabBar.titles = tabs.map { $0.title }
         tabBar.selected = active
-    }
-
-    func applyAudio() {
-        for (i, t) in tabs.enumerated() {
-            let on = allTabs || i == active
-            if t.session.audio.enabled != on { t.session.audio.enabled = on; if !on { t.session.audio.silence() } }
-        }
     }
 
     // MARK: persistence
@@ -393,30 +340,20 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func navBack() { cur()?.key(4) }
     @objc func navHome() { cur()?.key(3) }
     @objc func navApps() { cur()?.key(187) }
-    @objc func toggleSpeaks() {
-        guard let t = tabs.indices.contains(active) ? tabs[active] : nil else { return }
-        t.session.phoneSpeaks.toggle()
-        var l = UserDefaults.standard.stringArray(forKey: "speaks") ?? []
-        l.removeAll { $0 == t.phoneId }
-        if t.session.phoneSpeaks { l.append(t.phoneId) }
-        UserDefaults.standard.set(l, forKey: "speaks")
-        paintMode(); t.session.reconnect()
+    func applyAudio() {
+        for (i, t) in tabs.enumerated() {
+            let on = i == active
+            if t.session.audio.enabled != on { t.session.audio.enabled = on; if !on { t.session.audio.silence() } }
+        }
     }
-    @objc func modeThis() { allTabs = false; paintMode(); applyAudio() }
-    @objc func modeAll() { allTabs = true; paintMode(); applyAudio() }
-    var muted: Bool { cur()?.audio.muted ?? false }
-    func paintMode() {
-        for b in pvBtns { b.normal = b.tag == pvStream ? ACCENT : DIM }
-        pvThis.normal = pvAll ? DIM : ACCENT; pvAllBtn.normal = pvAll ? ACCENT : DIM
-        thisBtn.normal = allTabs ? DIM : ACCENT; allBtn.normal = allTabs ? ACCENT : DIM
-        muteBtn.normal = muted ? DIM : BRIGHT; muteBtn.word = muted ? "MUTED" : "SOUND ON"
-        let sp = cur()?.phoneSpeaks ?? false
-        spkBtn.word = sp ? "PHONE SPEAKS" : "PHONE SILENT"; spkBtn.normal = sp ? ACCENT : BRIGHT
-    }
-    @objc func toggleMute() { if let s = cur() { s.audio.muted.toggle() }; paintMode() }
-    @objc func volumeChanged() { setFromSlider(slider.doubleValue) }
 
-    // the phone's own volume (the Mac listens pre-fader, so this never changes what you hear)
+    // The slider is the phone's own media volume, two ways: moving it sets the phone, a change on the phone moves it.
+    // (The Mac listens pre-fader, so this never changes what you hear.)
+    @objc func volumeChanged() {
+        lastUserVol = Date()
+        pvValue.stringValue = "\(Int(slider.doubleValue.rounded())) / \(Int(slider.maxValue))"
+        if NSApp.currentEvent?.type == .leftMouseUp || NSApp.currentEvent?.type == .keyDown || NSApp.currentEvent == nil { setPhoneVolume(Int(slider.doubleValue.rounded())) }
+    }
     func parseVol(_ s: String) -> (Int, Int)? {
         guard let r = s.range(of: "volume is ") else { return nil }
         let rest = s[r.upperBound...]
@@ -425,68 +362,60 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let mx = Int(rest[r2.upperBound...].prefix(while: { $0.isNumber })) ?? -1
         return mx >= 0 ? (v, mx) : nil
     }
-    func getVol(_ serial: String, _ stream: Int) -> (Int, Int)? {
-        parseVol(adb(serial, ["shell", "cmd", "media_session", "volume", "--stream", "\(stream)", "--get"], timeout: 10))
+    func getVol(_ serial: String) -> (Int, Int)? {
+        parseVol(adb(serial, ["shell", "cmd", "media_session", "volume", "--stream", "3", "--get"], timeout: 8))
     }
-    /// Sets the phone's volume and reads it back. If `cmd media_session` does not take, the volume keys are pressed until it is there (media stream).
-    func setPhoneVol(_ ser: String, _ st: Int, _ target: Int) -> (Int, Int)? {
-        guard let (v0, mx) = getVol(ser, st) else { return nil }
+    /// Sets the phone's media volume and reads it back; if `cmd media_session` does not take, the volume keys are pressed until it does.
+    func setPhoneVol(_ ser: String, _ target: Int) -> (Int, Int)? {
+        guard let (v0, mx) = getVol(ser) else { return nil }
         let nv = max(0, min(mx, target))
         if nv == v0 { return (v0, mx) }
-        _ = adb(ser, ["shell", "cmd", "media_session", "volume", "--stream", "\(st)", "--set", "\(nv)"], timeout: 10)
-        var back = getVol(ser, st)
+        _ = adb(ser, ["shell", "cmd", "media_session", "volume", "--stream", "3", "--set", "\(nv)"], timeout: 10)
+        var back = getVol(ser)
         var how = "media_session"
-        if back?.0 != nv && st == 3 {
+        if back?.0 != nv {
             how = "keyevent"
             var cur = back?.0 ?? v0
-            var guardN = 0
-            while cur != nv && guardN < 40 {
+            var n = 0
+            while cur != nv && n < 40 {
                 _ = adb(ser, ["shell", "input", "keyevent", cur < nv ? "24" : "25"], timeout: 6)
-                guardN += 1
-                cur = getVol(ser, st)?.0 ?? cur
+                n += 1
+                cur = getVol(ser)?.0 ?? cur
             }
-            back = getVol(ser, st)
+            back = getVol(ser)
         }
-        logLine("phone volume \(ser) stream \(st): \(v0) -> \(nv) via \(how), read back \(back.map { "\($0.0)" } ?? "?")")
+        logLine("phone volume \(ser): \(v0) -> \(nv) via \(how), read back \(back.map { "\($0.0)" } ?? "?")")
         return back
     }
-    func targetSerials() -> [String] { pvAll ? tabs.map { $0.session.serial } : (tabs.indices.contains(active) ? [tabs[active].session.serial] : []) }
+    func setPhoneVolume(_ value: Int) {
+        guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty else { return }
+        let ser = tabs[active].session.serial
+        volBusy = true
+        DispatchQueue.global().async { [weak self] in
+            let r = self?.setPhoneVol(ser, value)
+            DispatchQueue.main.async { self?.volBusy = false; self?.lastUserVol = Date(); self?.show(r) }
+        }
+    }
     func show(_ r: (Int, Int)?) {
         guard let r = r else { pvValue.stringValue = "— / —"; return }
         pvValue.stringValue = "\(r.0) / \(r.1)"
         slider.maxValue = Double(max(1, r.1)); slider.doubleValue = Double(r.0)
     }
-    func refreshPhoneVol() {
+    /// About once a second: read the active phone's volume, so the slider follows its own buttons.
+    func pollVolume() {
+        if volBusy || Date().timeIntervalSince(lastUserVol) < 1.5 || Date().timeIntervalSince(lastVolPoll) < 1 { return }
         guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty else { return }
-        let serial = tabs[active].session.serial, st = pvStream
+        lastVolPoll = Date(); volBusy = true
+        let ser = tabs[active].session.serial
         DispatchQueue.global().async { [weak self] in
-            let r = self?.getVol(serial, st)
-            DispatchQueue.main.async { self?.show(r) }
+            let r = self?.getVol(ser)
+            DispatchQueue.main.async { self?.volBusy = false; if let r = r, self?.tabs.indices.contains(self?.active ?? 0) == true, self?.tabs[self!.active].session.serial == ser { self?.show(r) } }
         }
     }
-    func setFromSlider(_ value: Double) {
-        let frac = slider.maxValue > 0 ? value / slider.maxValue : 0
-        let st = pvStream, targets = targetSerials(), activeSerial = tabs.indices.contains(active) ? tabs[active].session.serial : ""
-        let exact = Int(value.rounded())
-        DispatchQueue.global().async { [weak self] in
-            guard let self = self else { return }
-            var shown: (Int, Int)?
-            for ser in targets where !ser.isEmpty {
-                var t = exact
-                if ser != activeSerial, let (_, mx) = self.getVol(ser, st) { t = Int((frac * Double(mx)).rounded()) }
-                let back = self.setPhoneVol(ser, st, t)
-                if ser == activeSerial { shown = back }
-            }
-            DispatchQueue.main.async { self.show(shown) }
-        }
-    }
-    @objc func pvPick(_ s: NSButton) { pvStream = s.tag; paintMode(); refreshPhoneVol() }
-    @objc func pvScopeThis() { pvAll = false; paintMode() }
-    @objc func pvScopeAll() { pvAll = true; paintMode() }
-    @objc func pvStep(_ s: NSButton) { setFromSlider(slider.doubleValue + Double(s.tag)) }
 
     func tick() {
         refreshStatus()
+        pollVolume()
         if immersive && !cursorHidden && Date().timeIntervalSince(lastMouse) > 2 { NSCursor.hide(); cursorHidden = true }
         refreshTabs()
         if Date().timeIntervalSince(lastLog) > 5 {
@@ -500,7 +429,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let t = tabs.indices.contains(active) ? tabs[active] : nil else { status.stringValue = "NO PHONE OPEN"; return }
         let s = t.session
         let db = s.audio.levelDb <= -100 ? "silent" : "\(Int(s.audio.levelDb)) dB"
-        status.stringValue = "\(s.width)×\(s.height) · \(s.fps) fps · \(s.audioState) \(db) · PRE-FADER"
+        status.stringValue = "\(s.width)×\(s.height) · \(s.fps) fps · \(s.audioState) \(db)"
     }
 
     func application(_ app: NSApplication, open urls: [URL]) {

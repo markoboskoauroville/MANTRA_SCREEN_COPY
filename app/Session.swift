@@ -37,7 +37,6 @@ final class Session {
     private var touchDown = false
     var clipboardSeq: UInt64 = 1
     /// false (default): the phone stays silent, its sound goes only to the Mac (audio_source=playback, no audio_dup).
-    var phoneSpeaks = false
 
     init(phoneId: String, routes: @escaping () -> [String]) {
         self.phoneId = phoneId
@@ -143,7 +142,7 @@ final class Session {
 
         let sh = Process()
         sh.executableURL = URL(fileURLWithPath: ADB)
-        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 audio_codec=raw audio_source=playback\(phoneSpeaks ? " audio_dup=true" : "") max_size=1920 video_bit_rate=8000000 max_fps=60"
+        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 audio_codec=raw audio_source=playback max_size=1920 video_bit_rate=8000000 max_fps=60"
         sh.arguments = ["-s", serial, "shell", "CLASSPATH=\(remote) app_process / com.genymobile.scrcpy.Server 4.1 \(opts)"]
         let pipe = Pipe()
         sh.standardOutput = pipe; sh.standardError = pipe

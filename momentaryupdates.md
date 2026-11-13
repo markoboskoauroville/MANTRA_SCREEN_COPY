@@ -17,3 +17,9 @@
 ## 13.11.2026, Marko, for v3 (via the coordinator)
 
 "First of all, it needs to automatically connect to all available phones. I don't need to press Connect. Second of all, I need immersive view, and that immersive view is full-screen phone only, without anything. When I press Tab on my keyboard when I'm in immersive view, I go to the next phone."
+
+## 13.11.2026, Marko, design correction for v4 (via the coordinator)
+
+"this volume slider in the screen copy of Mantra is the wrong one. It needs to adjust the volume on my phone remotely. That's what we want, and that's it. This control, which is a slider, please make it control the volume on the phone remotely."
+
+"don't make general controls that control all phones. I want it to simply be that when I tap a phone, the controls are attached to that phone ... One-tap controls are attached to that phone. Make things logical and not confusing. What you did is very, very confusing, and I don't need output volume control for the screen copy itself. I just need to control the volume of the whole phone remotely with this slider, and that's it. It can also reflect if I'm changing volume on my phone: the slider will move on my screen copy as well."
