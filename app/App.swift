@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 14
+let VERSION = 15
 
 final class Tab {
     let phoneId: String
@@ -358,7 +358,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func realRotation(_ ser: String) -> Int? {
         let out = adb(ser, ["shell", "dumpsys window displays | grep -m1 mCurrentRotation"], timeout: 8)
         guard let r = out.range(of: "ROTATION_") else { return nil }
-        return Int(out[r.upperBound...].prefix(while: { $0.isNumber }))
+        guard let deg = Int(out[r.upperBound...].prefix(while: { $0.isNumber })) else { return nil }
+        return deg >= 90 ? deg / 90 : deg          // ROTATION_90 is 1
     }
     var lastRotate = Date.distantPast
     func rotate(_ n: Int) {
