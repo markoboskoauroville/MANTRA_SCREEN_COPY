@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 12
+let VERSION = 13
 
 final class Tab {
     let phoneId: String
@@ -369,7 +369,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             _ = adb(ser, ["shell", "settings", "put", "system", "accelerometer_rotation", "0"], timeout: 8)
             _ = adb(ser, ["shell", "cmd", "window", "user-rotation", "-d", "0", "lock", "\(n)"], timeout: 8)
             logLine("rotation \(ser): lock \(n)")
-            self?.lastReconcile = .distantPast
+            self?.lastReconcile = Date()   // give the phone time to turn before it is read back
         }
     }
     /// Every ~3 s: compare what was asked with what the phone really does, and turn the picture only when the phone does not.
