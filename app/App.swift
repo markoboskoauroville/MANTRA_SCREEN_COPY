@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 6
+let VERSION = 7
 
 final class Tab {
     let phoneId: String
@@ -453,7 +453,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func application(_ app: NSApplication, open urls: [URL]) {
         for u in urls where u.scheme == "screencopy" {
             if u.host == "tab", let n = Int(u.lastPathComponent) { panelShown = false; panel.isHidden = true; select(n - 1) }
-            if u.host == "volume", let n = Int(u.lastPathComponent) { setFromSlider(Double(n)) }
+            if u.host == "volume", let n = Int(u.lastPathComponent) { setPhoneVolume(n) }
             if u.host == "window" { logLine("window number \(window.windowNumber)") }
         }
     }
