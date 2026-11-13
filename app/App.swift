@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 11
+let VERSION = 12
 
 final class Tab {
     let phoneId: String
@@ -367,7 +367,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let ser = t.session.serial
         DispatchQueue.global().async { [weak self] in
             _ = adb(ser, ["shell", "settings", "put", "system", "accelerometer_rotation", "0"], timeout: 8)
-            _ = adb(ser, ["shell", "cmd", "window", "user-rotation", "lock", "\(n)"], timeout: 8)
+            _ = adb(ser, ["shell", "cmd", "window", "user-rotation", "-d", "0", "lock", "\(n)"], timeout: 8)
             logLine("rotation \(ser): lock \(n)")
             self?.lastReconcile = .distantPast
         }
