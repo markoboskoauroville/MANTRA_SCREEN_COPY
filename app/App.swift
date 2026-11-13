@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 1
+let VERSION = 2
 
 final class Tab {
     let phoneId: String
@@ -194,7 +194,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         reloadPanel(); refreshTabs(); save()
         if !autoOpened && Discovery.shared.firstDone {
             autoOpened = true
-            if tabs.isEmpty { for p in Discovery.shared.all() { addTab(phoneId: p.id, name: p.name) } }
+            if tabs.isEmpty {
+                for p in Discovery.shared.all() { addTab(phoneId: p.id, name: p.name) }
+                if !tabs.isEmpty { select(0); panelShown = false; panel.isHidden = true }
+            }
         }
     }
 
@@ -209,6 +212,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tabs.append(t)
         root.addSubview(t.view, positioned: .below, relativeTo: panel)
         t.view.showNote("CONNECTING")
+        layoutAll()
         t.session.start()
         save()
         select(tabs.count - 1)

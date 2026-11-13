@@ -131,7 +131,7 @@ final class Discovery {
         var candidates: Set<String> = []
         // 1. wireless debugging announced by mDNS
         for line in adb(nil, ["mdns", "services"], timeout: 6).split(separator: "\n") where line.contains("_adb-tls-connect") {
-            if let last = line.split(separator: " ", omittingEmptySubsequences: true).last, last.contains(":") { candidates.insert(String(last)) }
+            if let last = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).last, last.contains(":") { candidates.insert(String(last)) }
         }
         // 2. port 5555 on every local subnet
         var open: [String] = []
