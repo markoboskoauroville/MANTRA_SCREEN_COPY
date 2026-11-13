@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 13
+let VERSION = 14
 
 final class Tab {
     let phoneId: String
@@ -360,7 +360,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let r = out.range(of: "ROTATION_") else { return nil }
         return Int(out[r.upperBound...].prefix(while: { $0.isNumber }))
     }
+    var lastRotate = Date.distantPast
     func rotate(_ n: Int) {
+        if Date().timeIntervalSince(lastRotate) < 1.0 { return }      // repeated clicks: one change at a time
+        lastRotate = Date()
         guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty else { return }
         let t = tabs[active]
         wantLandscape[t.phoneId] = (n == 1)

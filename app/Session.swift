@@ -13,6 +13,8 @@ final class Session {
     var captureRotation = 0                       // 0 or 90: the picture is turned by the capture when the phone itself cannot turn
     var forced: String?                           // a route chosen by hand
     private let routes: () -> [String]
+    private var knownRoutes: [String] = []
+    private var fwdPort = 0
     let layer = AVSampleBufferDisplayLayer()
     let audio = AudioOut()
     var onChange: (() -> Void)?                // status or size changed (called on the main queue)
@@ -71,7 +73,8 @@ final class Session {
     // MARK: connect loop
     private func loop() {
         while running {
-            let rs = forced.map { [$0] } ?? routes()
+            var rs = forced.map { [$0] } ?? routes()
+            if forced == nil { if rs.isEmpty { rs = knownRoutes } else { knownRoutes = rs } }       // discovery has nothing: try the addresses that worked before
             if rs.isEmpty { set("SEARCHING"); for _ in 0..<10 where running { usleep(100_000) }; continue }
             var was = false
             for r in rs where running {
@@ -92,6 +95,7 @@ final class Session {
         vfd = -1; afd = -1; cfd = -1
         if let sh = shell, sh.isRunning { sh.terminate() }
         shell = nil
+        if fwdPort != 0, !serial.isEmpty { _ = adb(serial, ["forward", "--remove", "tcp:\(fwdPort)"], timeout: 5); fwdPort = 0 }
         audio.silence()
     }
 
@@ -133,13 +137,16 @@ final class Session {
         if serial.contains(":") { _ = adb(nil, ["connect", serial], timeout: 8) }
         let state = adb(serial, ["get-state"], timeout: 8).trimmingCharacters(in: .whitespacesAndNewlines)
         if state != "device" { logLine("\(serial): state '\(state)'"); return false }
+        if !adb(serial, ["shell", "echo", "ok"], timeout: 6).contains("ok") { logLine("\(serial): shell does not answer"); return false }
         let remote = "/data/local/tmp/scrcpy-server-mantra.jar"
+        _ = adb(serial, ["shell", "pkill -f com.genymobile.scrcpy.Server; sleep 0.3"], timeout: 8)      // an old server from a dropped session may still hold the phone's audio and sockets
         let pushed = adb(serial, ["push", serverJarPath(), remote], timeout: 30)
         if !pushed.contains("pushed") && !pushed.contains("1 file") { logLine("\(serial): push: \(pushed)"); return false }
         let scid = UInt32.random(in: 1..<0x7fffffff)
         let scidHex = String(format: "%08x", scid)
         let fwd = adb(serial, ["forward", "tcp:0", "localabstract:scrcpy_\(scidHex)"], timeout: 10).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let port = Int(fwd) else { logLine("\(serial): forward: \(fwd)"); return false }
+        fwdPort = port
 
         let sh = Process()
         sh.executableURL = URL(fileURLWithPath: ADB)

@@ -94,6 +94,10 @@ final class Discovery {
             }
         }
     }
+    static func sane(_ s: String) -> Bool {
+        let l = s.lowercased()
+        return !s.isEmpty && s.count < 60 && !l.contains("error") && !l.contains("offline") && !l.contains("not found") && !l.contains("unauthorized") && !l.contains("closed")
+    }
     func scanNow() { scanRequested = true }
 
     func all() -> [Phone] {
@@ -111,9 +115,13 @@ final class Discovery {
         let list = adbDevices().filter { $0.state == "device" && !$0.serial.hasPrefix("emulator-") }
         var groups: [String: Phone] = [:]
         for e in list {
+            // a failed read ("error: device offline") must never be remembered as the phone's identity
+            if let c = info[e.serial], !Discovery.sane(c.id) || !Discovery.sane(c.name) { info[e.serial] = nil }
             if info[e.serial] == nil {
-                let id = physicalId(e.serial)
-                info[e.serial] = (id.isEmpty || id.contains("error") ? e.serial : id, phoneName(e.serial))
+                let id = physicalId(e.serial).split(separator: "\n").first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+                let nm = phoneName(e.serial)
+                if !Discovery.sane(id) || !Discovery.sane(nm) { logLine("discovery: \(e.serial) not readable yet (\(id) / \(nm))"); continue }
+                info[e.serial] = (id, nm)
             }
             let inf = info[e.serial]!
             let t0 = Date()
