@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 7
+let VERSION = 8
 
 final class Tab {
     let phoneId: String
@@ -389,6 +389,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if nv == v0 { return (v0, mx) }
         _ = adb(ser, ["shell", "cmd", "media_session", "volume", "--stream", "3", "--set", "\(nv)"], timeout: 10)
         var back = getVol(ser)
+        for _ in 0..<6 where back?.0 != nv { usleep(300_000); back = getVol(ser) }      // the phone takes a moment to apply it
         var how = "media_session"
         if back?.0 != nv {
             how = "keyevent"
@@ -397,6 +398,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             while cur != nv && n < 40 {
                 _ = adb(ser, ["shell", "input", "keyevent", cur < nv ? "24" : "25"], timeout: 6)
                 n += 1
+                usleep(250_000)
                 cur = getVol(ser)?.0 ?? cur
             }
             back = getVol(ser)
