@@ -113,14 +113,15 @@ final class Discovery {
 
     private func cycle(scan: Bool) {
         if scan { findNetworkPhones() }
-        let list = adbDevices().filter { $0.state == "device" && !$0.serial.hasPrefix("emulator-") }
+        let list = adbDevices().filter { $0.state == "device" }
         var groups: [String: Phone] = [:]
         for e in list {
             // a failed read ("error: device offline") must never be remembered as the phone's identity
             if let c = info[e.serial], !Discovery.sane(c.id) || !Discovery.sane(c.name) { info[e.serial] = nil }
             if info[e.serial] == nil {
                 let id = physicalId(e.serial).split(separator: "\n").first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
-                let nm = phoneName(e.serial)
+                var nm = phoneName(e.serial)
+                if e.serial.hasPrefix("emulator-") { nm = "Pixel 7 emulator" }        // the local Android emulator is a phone too (v28)
                 if !Discovery.sane(id) || !Discovery.sane(nm) { logLine("discovery: \(e.serial) not readable yet (\(id) / \(nm))"); continue }
                 info[e.serial] = (id, nm)
             }
