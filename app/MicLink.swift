@@ -5,6 +5,9 @@ import AVFoundation
 /// TCP 127.0.0.1:8879; client line "TTT-MIC 1 <rate>\n"; answer "OK <rate> 1 s16le\n", then raw PCM mono s16le in ~20 ms chunks.
 /// Bad line: "ERR <reason>\n". No microphone permission: "ERR mic-permission\n".
 /// The microphone (default input device, never changed) is open only while a client is connected.
+/// v27: every phone gets its OWN listener (127.0.0.1:<port>, `adb reverse tcp:8879 tcp:<port>`), so the Mac knows which phone
+/// asks, and `gate` decides: "" = yes, else the line "NO <reason>\n" and close (TTT then records with the phone mic).
+/// The shared 8879 listener (a reverse left from v22-v26) always answers "NO unknown-phone".
 final class MicLink {
     static let shared = MicLink()
     static let port: UInt16 = 8879
@@ -27,35 +30,48 @@ final class MicLink {
     private var listenFd: Int32 = -1
     private var statsTimer: DispatchSourceTimer?
     private let q = DispatchQueue(label: "miclink.engine")
+    var gate: ((String) -> String)?
+    private var phonePorts: [String: UInt16] = [:]
 
     static func allowed() -> Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
 
     // MARK: listener
     func start() {
+        guard let fd = listenOn(MicLink.port, phone: nil) else { return }
+        listenFd = fd
+        let t = DispatchSource.makeTimerSource(queue: .global())
+        t.schedule(deadline: .now() + 5, repeating: 5)
+        t.setEventHandler { [weak self] in self?.logStats() }
+        t.resume(); statsTimer = t
+    }
+
+    /// A listener on 127.0.0.1:<port> (0 = any free port) whose clients are taken as `phone` (nil = unknown). Returns the fd.
+    private func listenOn(_ port: UInt16, phone: String?) -> Int32? {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { logLine("miclink: socket failed"); return }
+        guard fd >= 0 else { logLine("miclink: socket failed"); return nil }
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, 4)
         var addr = sockaddr_in()
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = MicLink.port.bigEndian
+        addr.sin_port = port.bigEndian
         addr.sin_addr.s_addr = inet_addr("127.0.0.1")
         let b = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        if b != 0 || listen(fd, 8) != 0 { logLine("miclink: cannot listen on 127.0.0.1:\(MicLink.port) (errno \(errno))"); close(fd); return }
-        listenFd = fd
-        logLine("miclink: listening on 127.0.0.1:\(MicLink.port)")
+        if b != 0 || listen(fd, 8) != 0 { logLine("miclink: cannot listen on 127.0.0.1:\(port) (errno \(errno))"); close(fd); return nil }
+        var got = sockaddr_in(); var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+        let real = UInt16(bigEndian: got.sin_port)
+        if let p = phone { lock.lock(); phonePorts[p] = real; lock.unlock() }
+        let whom = phone != nil ? "for phone " + phone! : "(shared, refuses)"
+        logLine("miclink: listening on 127.0.0.1:\(real) \(whom)")
         Thread.detachNewThread { [weak self] in
             while let s = self {
                 let c = accept(fd, nil, nil)
                 if c < 0 { if errno == EINTR { continue }; break }
-                Thread.detachNewThread { s.handle(c) }
+                Thread.detachNewThread { s.handle(c, phone: phone) }
             }
         }
-        let t = DispatchSource.makeTimerSource(queue: .global())
-        t.schedule(deadline: .now() + 5, repeating: 5)
-        t.setEventHandler { [weak self] in self?.logStats() }
-        t.resume(); statsTimer = t
+        return fd
     }
 
     private func readLine(_ fd: Int32) -> String? {
@@ -82,7 +98,7 @@ final class MicLink {
     }
     private func reply(_ fd: Int32, _ s: String) { let d = Array(s.utf8); _ = d.withUnsafeBytes { sendAll(fd, $0.baseAddress!, d.count) } }
 
-    private func handle(_ fd: Int32) {
+    private func handle(_ fd: Int32, phone: String?) {
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, 4)
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, 4)
@@ -96,11 +112,17 @@ final class MicLink {
             logLine("miclink: client refused, microphone permission missing")
             reply(fd, "ERR mic-permission\n"); close(fd); return
         }
+        // v27: only the phone he drives from the Mac right now gets the Mac microphone
+        let verdict = phone == nil ? "NO unknown-phone" : (gate?(phone!) ?? "NO no-gate")
+        if !verdict.isEmpty {
+            logLine("miclink: \(phone ?? "unknown phone") refused: \(verdict)")
+            reply(fd, verdict + "\n"); close(fd); return
+        }
         var tv = timeval(tv_sec: 1, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         reply(fd, "OK \(r) 1 s16le\n")
         let c = add(fd: fd, rate: Double(r))
-        logLine("miclink: client #\(c.id) connected, \(r) Hz (clients now \(count()))")
+        logLine("miclink: client #\(c.id) (\(phone ?? "?")) connected, \(r) Hz, allowed: driven from the Mac (clients now \(count()))")
         // wait for the client to go: it sends nothing more, recv returns 0 on close
         var tv0 = timeval(tv_sec: 0, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv0, socklen_t(MemoryLayout<timeval>.size))
@@ -259,10 +281,13 @@ final class MicLink {
     }
 
     // MARK: adb reverse
-    func applyReverse(_ serial: String) {
-        let out = adb(serial, ["reverse", "tcp:\(MicLink.port)", "tcp:\(MicLink.port)"], timeout: 8).trimmingCharacters(in: .whitespacesAndNewlines)
+    func applyReverse(_ serial: String, phone: String) {
+        lock.lock(); var port = phonePorts[phone]; lock.unlock()
+        if port == nil { _ = listenOn(0, phone: phone); lock.lock(); port = phonePorts[phone]; lock.unlock() }
+        guard let p = port else { logLine("miclink: no listener for \(phone), no reverse on \(serial)"); return }
+        let out = adb(serial, ["reverse", "tcp:\(MicLink.port)", "tcp:\(p)"], timeout: 8).trimmingCharacters(in: .whitespacesAndNewlines)
         lock.lock(); reversed.insert(serial); lock.unlock()
-        logLine("miclink: reverse applied on \(serial) (\(out.isEmpty ? "ok" : out))")
+        logLine("miclink: reverse applied on \(serial) (8879 -> Mac \(p), phone \(phone)) (\(out.isEmpty ? "ok" : out))")
     }
     func removeAllReverse() {
         lock.lock(); let all = reversed; reversed = []; lock.unlock()

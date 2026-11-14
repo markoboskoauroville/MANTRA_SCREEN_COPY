@@ -30,6 +30,8 @@ final class Session {
     private var fpsStart = Date()
     private var running = false
     private var useOpus = false
+    /// The last click, key, text or scroll sent to this phone from the Mac (v27: the Mac microphone gate).
+    private(set) var lastMacInput = Date.distantPast
     private var cfd: Int32 = -1
     private var vfd: Int32 = -1
     private var afd: Int32 = -1
@@ -149,7 +151,7 @@ final class Session {
         let state = adb(serial, ["get-state"], timeout: 8).trimmingCharacters(in: .whitespacesAndNewlines)
         if state != "device" { logLine("\(serial): state '\(state)'"); return false }
         if !adb(serial, ["shell", "echo", "ok"], timeout: 6).contains("ok") { logLine("\(serial): shell does not answer"); return false }
-        MicLink.shared.applyReverse(serial)
+        MicLink.shared.applyReverse(serial, phone: phoneId)
         // auto-rotate goes off while the phone is connected: only the rotate button turns it (Marko, 14.11.2026).
         // Its own setting is kept once and put back when the app quits or the tab is closed.
         let key = "autoRotate.\(phoneId)"
@@ -376,6 +378,7 @@ final class Session {
     func sendResetVideo() { send([17]) }
 
     func key(_ keycode: UInt32, meta: UInt32 = 0) {
+        lastMacInput = Date()
         send([0, 0] + put32(keycode) + put32(0) + put32(meta))      // down
         send([0, 1] + put32(keycode) + put32(0) + put32(meta))      // up
     }
@@ -383,10 +386,12 @@ final class Session {
     func text(_ s: String) {
         let u = Array(s.utf8)
         if u.isEmpty || u.count > 300 { return }
+        lastMacInput = Date()
         send([1] + put32(UInt32(u.count)) + u)
     }
 
     func paste(_ s: String) {
+        lastMacInput = Date()
         let u = Array(s.utf8)
         clipboardSeq += 1
         send([9] + [0, 0, 0, 0] + put32(UInt32(clipboardSeq)) + [1] + put32(UInt32(u.count)) + u)
@@ -395,6 +400,7 @@ final class Session {
     /// action 0 down, 1 up, 2 move. x, y in video pixels.
     func touch(action: UInt8, x: Int, y: Int) {
         if width == 0 { return }
+        lastMacInput = Date()
         let pressure: UInt16 = action == 1 ? 0 : 0xffff
         let btn: UInt32 = action == 1 ? 0 : 1
         let actionButton: UInt32 = action == 2 ? 0 : 1
@@ -414,6 +420,7 @@ final class Session {
 
     func scroll(x: Int, y: Int, h: Double, v: Double) {
         if width == 0 { return }
+        lastMacInput = Date()
         func fix(_ d: Double) -> UInt16 {
             let c: Double = max(-1.0, min(1.0, d / 16.0))
             return UInt16(bitPattern: Int16(c * 32767.0))

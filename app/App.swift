@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 26
+let VERSION = 27
 let APP_NAME = "Screen Copy (Mantra)"
 
 final class Tab {
@@ -102,6 +102,21 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Discovery.shared.start()
         restore()
         MicLink.shared.start()
+        // v27 (Marko, 14.11.2026: "If I'm clicking on my Pixel phone to transcribe ... it should take the microphone from the
+        // phone"): the Mac microphone goes to a phone only while he drives THAT phone from the Mac: Screen Copy is the active
+        // app, its window is key, that phone's tab is shown and it got a click/key from the Mac in the last 5 s.
+        MicLink.shared.gate = { [weak self] phoneId in
+            guard let me = self else { return "NO app-gone" }
+            var why = ""
+            DispatchQueue.main.sync {
+                if !NSApp.isActive { why = "NO screen-copy-not-front"; return }
+                if !(me.window?.isKeyWindow ?? false) { why = "NO window-not-key"; return }
+                guard me.tabs.indices.contains(me.active), me.tabs[me.active].phoneId == phoneId else { why = "NO other-tab"; return }
+                let age = Date().timeIntervalSince(me.tabs[me.active].session.lastMacInput)
+                if age > 5 { why = "NO local (no Mac input for \(Int(age)) s)"; return }
+            }
+            return why
+        }
         Updater.checkAtStart()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
     }
@@ -544,6 +559,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if u.host == "audiorec", let n = Int(u.lastPathComponent), tabs.indices.contains(active) { tabs[active].session.audio.startRecording(seconds: max(1, min(120, n))) }
             if u.host == "jitter", let n = Int(u.lastPathComponent) { for t in tabs { t.session.audio.setFixedTarget(ms: n) } }
             if u.host == "rotate" { toggleRotation() }          // test hook: the same as a press on the button
+            // test hook: screencopy://tap/<x>/<y> in phone pixels = one Mac click on the active tab (down, 80 ms, up)
+            if u.host == "tap", u.pathComponents.count >= 3, let x = Int(u.pathComponents[1]), let y = Int(u.pathComponents[2]), tabs.indices.contains(active) {
+                let s = tabs[active].session
+                s.touch(action: 0, x: x, y: y)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { s.touch(action: 1, x: x, y: y) }
+            }
             if u.host == "window" { logLine("window number \(window.windowNumber)") }
         }
     }
