@@ -53,4 +53,5 @@ Marko: "go ahead and build our custom audio link with TTT". Protocol (fixed, TTT
 - The Mac microphone (AVAudioEngine input tap on the DEFAULT input, no device is ever changed; channels averaged to mono, AVAudioConverter to the asked rate) is open only while at least one client is connected and closed 0.5 s after the last leaves (orange dot only while TTT records).
 - Info.plist NSMicrophoneUsageDescription. While the permission is missing an amber PERMISSIONS label top right (polled every 2 s); a click asks once (when not yet decided) and opens System Settings > Privacy > Microphone. The app never answers the macOS prompt.
 - Log (~/Library/Logs/ScreenCopyMantra.log): `miclink:` lines for listening, reverse applied/removed per phone, client connect/disconnect with rate, bytes per client every 5 s, microphone open/closed.
+- v23: resampling by hand (see LESSONS), debug WAV ~/Library/Logs/ScreenCopyMicLink.wav.
 - v22 also carries the start-up updater (app/Updater.swift from MANTRA_MANIFEST kits/mac-updater, repo MANTRA_SCREEN_COPY): from v23 on, the app asks "Do you want to update?" at start.
