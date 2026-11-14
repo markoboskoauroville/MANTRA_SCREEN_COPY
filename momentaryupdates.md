@@ -57,3 +57,9 @@
 ## 14.11.2026, Marko, Mac microphone to the phone for TTT (v22)
 
 "we are working on screen copy mantra so it can remotely send audio from the Mac to the phone and back ... I tried to transcribe some of my comments with TTT, and the sound is not heard" then "yes, go ahead and build our custom audio link with TTT".
+
+## 14.11.2026, Marko, icon "scrcpy" in two lines, fix remote sound, live TTT test (v25)
+
+"we are working on screen copy. First of all, rename the icon to be scrcpy In two lines. Fix remote sound. For example, right now I'm going to open my WhatsApp on my own account, where we can type freely without disturbing anybody. Now use DTT Mini to type something using the Adam speaker. Please try that, and if it lands in the message, let me know."
+
+("DTT Mini" = TTT Mini, the TTT keyboard.)
