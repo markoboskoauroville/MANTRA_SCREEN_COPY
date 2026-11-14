@@ -77,3 +77,7 @@
 ## 14.11.2026, Marko, every TTT record button picks the mic like H (finger = phone, Screen Copy click = Mac)
 
 "please update the screen copy. It doesn't work good with TTT. Come on, you found out, and we found out that when I click on Remote, let's say on my Pixel phone, it's going to pick up the speaker from my MacBook Pro. You fix it. But there are more recording buttons in this application. You also have a recording button. It needs to behave the same"
+
+## 14.11.2026, Marko, speaker mute button top right (v29)
+
+"please let's update my application screen copy. Mantra V28 should be V29 I need a speaker in upper right corner, which when I press, become hollow speaker, and that means that any sound from any of attached phones is not coming through. They are all muted."
