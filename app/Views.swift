@@ -128,6 +128,41 @@ final class VideoView: NSView {
 }
 
 /// The tab strip: one tab per phone (title, close), then +. Always centred.
+/// v29: the hairline meter of the TTT keyboard (MaRecordMeter.kt): 3 dp rounded track at 18 % tint, fill green / orange
+/// (> -12 dB) / red (> -3 dB), floor -54 dB, peak hold 2 px falling 0.6 dB per 60 ms. Phone sound is stereo, so (manifest
+/// vu-meter-mono-stereo) two thin bars with a small gap, no line, no labels.
+final class MeterView: NSView {
+    var db: (Double, Double) = (-120, -120) { didSet { needsDisplay = true } }
+    var dim = false { didSet { needsDisplay = true } }
+    private var peak: (Double, Double) = (-54, -54)
+    private var lastPeak = Date()
+    private static let floorDb = -54.0
+    private func norm(_ d: Double) -> CGFloat { CGFloat(max(0, min(1, (d - Self.floorDb) / -Self.floorDb))) }
+    private func colour(_ d: Double) -> NSColor {
+        d > -3 ? NSColor(red: 0.608, green: 0.231, blue: 0.2, alpha: 1) : d > -12 ? NSColor(red: 0.941, green: 0.533, blue: 0.243, alpha: 1) : NSColor(red: 0.337, green: 0.827, blue: 0.392, alpha: 1)
+    }
+    func step() {
+        let now = Date(); let k = max(1, now.timeIntervalSince(lastPeak) / 0.06) * 0.6; lastPeak = now
+        peak.0 = db.0 > peak.0 ? db.0 : max(Self.floorDb, peak.0 - k)
+        peak.1 = db.1 > peak.1 ? db.1 : max(Self.floorDb, peak.1 - k)
+        needsDisplay = true
+    }
+    override var isFlipped: Bool { false }
+    override func draw(_ r: NSRect) {
+        let a: CGFloat = dim ? 0.45 : 1
+        let bh = (bounds.height - 1) / 2, w = bounds.width
+        let rows: [(CGFloat, Double, Double)] = [(bh + 1, db.0, peak.0), (0, db.1, peak.1)]
+        for (y, d, p) in rows {
+            let tr = NSBezierPath(roundedRect: NSRect(x: 0, y: y, width: w, height: bh), xRadius: bh / 2, yRadius: bh / 2)
+            NSColor(white: 1, alpha: 0.18 * a).setFill(); tr.fill()
+            let f = w * norm(d)
+            if f > 0 { colour(d).withAlphaComponent(a).setFill(); NSBezierPath(roundedRect: NSRect(x: 0, y: y, width: max(f, bh), height: bh), xRadius: bh / 2, yRadius: bh / 2).fill() }
+            let px = min(w - 2, w * norm(p))
+            colour(p).withAlphaComponent(0.9 * a).setFill(); NSBezierPath(roundedRect: NSRect(x: px, y: y, width: 2, height: bh), xRadius: 1, yRadius: 1).fill()
+        }
+    }
+}
+
 final class TabBar: NSView {
     var live: [Bool] = [] { didSet { if live != oldValue { rebuild() } } }
     var titles: [String] = [] { didSet { if titles != oldValue { rebuild() } } }
@@ -139,6 +174,7 @@ final class TabBar: NSView {
     private var plus: WordButton!
     private var line = hairline()
     private var under = NSView()
+    private(set) var meters: [MeterView] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -155,6 +191,8 @@ final class TabBar: NSView {
     private func rebuild() {
         for v in items { v.removeFromSuperview() }
         items = []
+        for m in meters { m.removeFromSuperview() }
+        meters = []
         for (i, t) in titles.enumerated() {
             let b = WordButton(t, target: self, action: #selector(tabTapped(_:)))
             b.tag = i
@@ -165,6 +203,7 @@ final class TabBar: NSView {
             x.tag = i; x.normal = DIM
             x.setAccessibilityLabel("Close tab \(t)")
             addSubview(b); addSubview(x)
+            let m = MeterView(); m.setAccessibilityElement(false); addSubview(m); meters.append(m)
             items += [b, x]
         }
         needsLayout = true
@@ -172,14 +211,15 @@ final class TabBar: NSView {
     override func layout() {
         super.layout()
         let n = titles.count
-        let tabW: CGFloat = n == 0 ? 0 : min(190, (bounds.width - 60) / CGFloat(n))
+        let tabW: CGFloat = n == 0 ? 0 : min(190, (bounds.width - 104) / CGFloat(n))
         let total = tabW * CGFloat(n) + 28
         var x = (bounds.width - total) / 2
         let h = bounds.height
         for i in 0..<n {
             let b = items[2 * i] as! WordButton, c = items[2 * i + 1] as! WordButton
             let cw: CGFloat = 20
-            b.frame = NSRect(x: x, y: 4, width: tabW - cw, height: h - 8)
+            b.frame = NSRect(x: x, y: 10, width: tabW - cw, height: h - 14)
+            if i < meters.count { meters[i].frame = NSRect(x: x + 8, y: 4, width: max(10, tabW - cw - 16), height: 5) }
             b.alignment = .center
             b.lineBreakMode = .byTruncatingTail
             c.frame = NSRect(x: x + tabW - cw, y: 4, width: cw, height: h - 8)

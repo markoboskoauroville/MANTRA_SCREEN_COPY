@@ -95,6 +95,10 @@ final class AudioOut {
 
     var enabled = true { didSet { if !enabled && oldValue { silence() } } }
     var muted = false
+    /// v29: the speaker button in the window mutes every phone at once (playback only; phone volume untouched).
+    static var globalMute = false
+    private(set) var levelDbL: Double = -120, levelDbR: Double = -120
+    private(set) var lastPacketAt = Date.distantPast
     var volume: Float = 1.0
     private(set) var levelDb: Double = -120
     private(set) var packets = 0
@@ -136,21 +140,24 @@ final class AudioOut {
         if frames == 0 { return }
         if !attached { AudioHub.shared.attach(src); attached = true }
         var l = [Float](repeating: 0, count: frames), r = [Float](repeating: 0, count: frames)
-        var sum: Double = 0
+        var sum: Double = 0, sumL: Double = 0, sumR: Double = 0
         bytes.withUnsafeBytes { raw in
             let s = raw.bindMemory(to: Int16.self)
             for i in 0..<frames {
                 let a = Float(Int16(littleEndian: s[2 * i])) / 32768
                 let b = Float(Int16(littleEndian: s[2 * i + 1])) / 32768
                 l[i] = a; r[i] = b
-                sum += Double(a * a + b * b)
+                sum += Double(a * a + b * b); sumL += Double(a * a); sumR += Double(b * b)
             }
         }
         let rms = (sum / Double(frames * 2)).squareRoot()
         let db = rms > 0.000001 ? 20 * log10(rms) : -120
         levelDb = max(db, levelDb - 3)           // quick rise, slow fall
+        func chDb(_ x: Double) -> Double { let r = (x / Double(frames)).squareRoot(); return r > 0.000001 ? 20 * log10(r) : -120 }
+        levelDbL = max(chDb(sumL), levelDbL - 3); levelDbR = max(chDb(sumR), levelDbR - 3)
         packets += 1
         let now = Date()
+        lastPacketAt = now
         lock.lock(); defer { lock.unlock() }
         if lastArrival != .distantPast { maxGapMs = max(maxGapMs, now.timeIntervalSince(lastArrival) * 1000) }
         lastArrival = now
@@ -177,7 +184,7 @@ final class AudioOut {
     private func render(_ frames: Int, _ abl: UnsafeMutablePointer<AudioBufferList>) {
         let bufs = UnsafeMutableAudioBufferListPointer(abl)
         guard bufs.count >= 2, let pl = bufs[0].mData?.assumingMemoryBound(to: Float.self), let pr = bufs[1].mData?.assumingMemoryBound(to: Float.self) else { return }
-        let gain: Float = muted ? 0 : volume
+        let gain: Float = (muted || AudioOut.globalMute) ? 0 : volume
         lock.lock()
         var n = 0
         if primed {

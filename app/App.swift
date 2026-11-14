@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 28
+let VERSION = 29
 let APP_NAME = "Screen Copy (Mantra)"
 
 final class Tab {
@@ -48,6 +48,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastUserVol = Date.distantPast
     var volBusy = false
     var lastVolPoll = Date.distantPast
+    let muteBtn = NSButton(title: "", target: nil, action: nil)
+    var meterTimer: Timer?
     let permBtn = NSButton(title: "", target: nil, action: nil)
     var lastPermCheck = Date.distantPast
 
@@ -89,6 +91,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         permBtn.setAccessibilityLabel("PERMISSIONS")
         permBtn.isHidden = true
         root.addSubview(permBtn)
+        // v29 (Marko, 14.11.2026): speaker top right; filled = sound on, hollow slash = every phone muted on the Mac.
+        AudioOut.globalMute = UserDefaults.standard.bool(forKey: "muteAll")
+        muteBtn.isBordered = false; muteBtn.bezelStyle = .regularSquare; muteBtn.imagePosition = .imageOnly
+        muteBtn.imageScaling = .scaleProportionallyDown
+        muteBtn.target = self; muteBtn.action = #selector(muteClicked)
+        root.addSubview(muteBtn)
+        paintMute()
 
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -118,6 +127,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return why
         }
         Updater.checkAtStart()
+        meterTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in self?.updateMeters() }
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
     }
 
@@ -165,6 +175,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for t in tabs { t.view.frame = root.bounds }
             for v in [tabBar, hl1, panel, status] as [NSView] { v.isHidden = true }
             for v in sliderRow { v.isHidden = true }
+            muteBtn.isHidden = true
             return
         }
         tabBar.isHidden = false; hl1.isHidden = false; status.isHidden = false; panel.isHidden = true
@@ -177,7 +188,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.frame = area
         center(sliderRow, y: bottom - 40, spacing: 12)
         status.frame = NSRect(x: 12, y: h / 2 - 9, width: w - 24, height: 18)
-        permBtn.frame = NSRect(x: w - 112, y: h - 28, width: 104, height: 20)
+        muteBtn.frame = NSRect(x: w - 40, y: h - 34, width: 32, height: 32); muteBtn.isHidden = false
+        permBtn.frame = NSRect(x: w - 148, y: h - 28, width: 104, height: 20)
     }
     func center(_ views: [NSView], y: CGFloat, spacing: CGFloat) {
         var sizes: [NSSize] = []
@@ -526,12 +538,36 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func paintMute() {
+        let m = AudioOut.globalMute
+        let name = m ? "speaker.slash" : "speaker.wave.2.fill"
+        let cfg = NSImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+        muteBtn.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+        muteBtn.contentTintColor = m ? DIM : BRIGHT
+        muteBtn.setAccessibilityLabel(m ? "Unmute all phones" : "Mute all phones")
+        muteBtn.toolTip = m ? "All phones are muted on this Mac. Click to unmute." : "Mute the sound of all phones on this Mac."
+    }
+    @objc func muteClicked() {
+        AudioOut.globalMute.toggle()
+        UserDefaults.standard.set(AudioOut.globalMute, forKey: "muteAll")
+        paintMute(); updateMeters()
+        logLine("mute all phones: \(AudioOut.globalMute ? "MUTED" : "sound on") (player gain \(AudioOut.globalMute ? 0 : 1), phone volume untouched)")
+    }
+    func updateMeters() {
+        for (i, t) in tabs.enumerated() where i < tabBar.meters.count {
+            let a = t.session.audio, m = tabBar.meters[i]
+            let fresh = Date().timeIntervalSince(a.lastPacketAt) < 0.25
+            m.db = fresh ? (a.levelDbL, a.levelDbR) : (-120, -120)
+            m.dim = AudioOut.globalMute
+            m.step()
+        }
+    }
     @objc func permClicked() { MicPermission.clicked(); lastPermCheck = .distantPast }
     func tick() {
         if Date().timeIntervalSince(lastPermCheck) > 2 {
             lastPermCheck = Date()
             permBtn.isHidden = MicLink.allowed() || immersive
-            permBtn.frame = NSRect(x: root.bounds.width - 112, y: root.bounds.height - 28, width: 104, height: 20)
+            permBtn.frame = NSRect(x: root.bounds.width - 148, y: root.bounds.height - 28, width: 104, height: 20)
         }
         refreshStatus()
         pollVolume()
@@ -558,6 +594,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if u.host == "volume", let n = Int(u.lastPathComponent) { setPhoneVolume(n) }
             if u.host == "audiorec", let n = Int(u.lastPathComponent), tabs.indices.contains(active) { tabs[active].session.audio.startRecording(seconds: max(1, min(120, n))) }
             if u.host == "jitter", let n = Int(u.lastPathComponent) { for t in tabs { t.session.audio.setFixedTarget(ms: n) } }
+            if u.host == "mute" { muteClicked() }          // test hook: the same as a press on the speaker
             if u.host == "rotate" { toggleRotation() }          // test hook: the same as a press on the button
             // test hook: screencopy://tap/<x>/<y> in phone pixels = one Mac click on the active tab (down, 80 ms, up)
             if u.host == "tap", u.pathComponents.count >= 3, let x = Int(u.pathComponents[1]), let y = Int(u.pathComponents[2]), tabs.indices.contains(active) {

@@ -81,3 +81,7 @@
 ## 14.11.2026, Marko, speaker mute button top right (v29)
 
 "please let's update my application screen copy. Mantra V28 should be V29 I need a speaker in upper right corner, which when I press, become hollow speaker, and that means that any sound from any of attached phones is not coming through. They are all muted."
+
+## 14.11.2026, Marko, addition to v29: a meter at each tab
+
+"and also build a small meter at each step. If sound is coming, I want to see the meter running the same hairline meter we have on the TTT keyboard"
