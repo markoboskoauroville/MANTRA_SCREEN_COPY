@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 25
+let VERSION = 26
 let APP_NAME = "Screen Copy (Mantra)"
 
 final class Tab {

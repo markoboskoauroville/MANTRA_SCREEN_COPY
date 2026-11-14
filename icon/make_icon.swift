@@ -1,5 +1,5 @@
 import AppKit
-// six letters over one picture (SCR / CPY = scrcpy, over a phone), amber "Mac tools" tile. Usage: make_icon <iconset dir>
+// six letters over one picture (SCR / CPY = scrcpy, over a phone), black tile. Usage: make_icon <iconset dir>
 let dir = CommandLine.arguments[1]
 func render(_ px: Int) -> Data {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4,
@@ -9,12 +9,13 @@ func render(_ px: Int) -> Data {
     let s = CGFloat(px)
     let tile = NSRect(x: s * 0.0977, y: s * 0.0977, width: s * 0.8047, height: s * 0.8047)
     let path = NSBezierPath(roundedRect: tile, xRadius: s * 0.18, yRadius: s * 0.18)
-    NSGradient(starting: NSColor(red: 1.0, green: 0.72, blue: 0.2, alpha: 1), ending: NSColor(red: 0.85, green: 0.45, blue: 0.05, alpha: 1))!.draw(in: path, angle: -90)
+    // black tile like his other black-background apps (Spectral Analyzer: 824/1024 tile, radius 180, #0A0D0F) (Marko, 14.11.2026)
+    NSColor(calibratedRed: 0.04, green: 0.05, blue: 0.06, alpha: 1).setFill(); path.fill()
     if let img = NSImage(systemSymbolName: "iphone", accessibilityDescription: nil) {
         let cfg = NSImage.SymbolConfiguration(pointSize: s * 0.62, weight: .thin)
         let sym = img.withSymbolConfiguration(cfg) ?? img
         let t = NSImage(size: sym.size, flipped: false) { r in
-            sym.draw(in: r); NSColor.white.withAlphaComponent(0.46).set(); r.fill(using: .sourceAtop); return true }
+            sym.draw(in: r); NSColor.white.withAlphaComponent(0.28).set(); r.fill(using: .sourceAtop); return true }
         let w = t.size.width, h = t.size.height
         t.draw(in: NSRect(x: (s - w) / 2, y: (s - h) / 2, width: w, height: h))
     }

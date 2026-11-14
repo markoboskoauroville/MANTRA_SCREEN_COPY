@@ -63,3 +63,7 @@
 "we are working on screen copy. First of all, rename the icon to be scrcpy In two lines. Fix remote sound. For example, right now I'm going to open my WhatsApp on my own account, where we can type freely without disturbing anybody. Now use DTT Mini to type something using the Adam speaker. Please try that, and if it lands in the message, let me know."
 
 ("DTT Mini" = TTT Mini, the TTT keyboard.)
+
+## 14.11.2026, Marko, black icon background (v26)
+
+"screen copy should have a black background in the icon, like other apps with a black background. Please make it."
