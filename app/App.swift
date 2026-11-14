@@ -360,7 +360,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func toggleRotation() {
         guard let s = cur(), s.width > 0, tabs.indices.contains(active) else { return }
         let id = tabs[active].phoneId
-        if let t = rotPending[id], Date().timeIntervalSince(t) < 6 { logLine("rotation \(id): press ignored, the last one is still on its way"); return }
+        if rotPending[id] != nil { logLine("rotation \(id): press ignored, the last one is still on its way"); return }
         rotate(s.width > s.height ? 0 : 1)        // one press turns the phone from what it really shows now
     }
     func realRotation(_ ser: String) -> Int? {
@@ -392,7 +392,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             logLine("rotation \(ser): asked \(n) (\(asked)x), real rotation \(real.map { String($0) } ?? "?") after \(ms) ms")
-            DispatchQueue.main.async { self?.rotPending[id] = nil; self?.rotBtn.alphaValue = 1 }
+            // the press stays "on its way" until the picture on the Mac has turned too (paintRotation), at most 6 s
             // the guard: for 20 s the phone is kept where it was asked to be
             var fixes = 0
             while Date().timeIntervalSince(t0) < 25 && fixes < 4 {
@@ -423,7 +423,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func paintRotation() {
         guard let s = cur(), s.width > 0 else { return }
         let land = s.width > s.height
-        if tabs.indices.contains(active), rotPending[tabs[active].phoneId] != nil { return }      // the button shows the request until the picture follows
+        // the button shows the request until the picture follows; only then (at least 1.5 s, at most 6 s) the next press counts
+        if tabs.indices.contains(active), let t0 = rotPending[tabs[active].phoneId] {
+            let id = tabs[active].phoneId
+            let age = Date().timeIntervalSince(t0)
+            if (age >= 1.5 && land == (wantLandscape[id] ?? land)) || age > 6 { rotPending[id] = nil; rotBtn.alphaValue = 1 } else { return }
+        }
         if rotBtn.landscape != land { rotBtn.landscape = land }
         reshapeWindow(land)
     }

@@ -171,7 +171,8 @@ final class Discovery {
             if r.contains("connected to") && !r.contains("failed") { continue }
             // the adb server cannot reach the LAN (no Local Network permission) but this app can: go through a local relay
             let hp = c.split(separator: ":")
-            if hp.count == 2, let port = Int(hp[1]), tcpOpen(String(hp[0]), port, timeoutMs: 1500), let local = Relay.shared.open(c) {
+            let blocked = r.contains("No route to host") || r.contains("not permitted")      // the privacy block, not a phone that is away
+            if blocked, hp.count == 2, let port = Int(hp[1]), tcpOpen(String(hp[0]), port, timeoutMs: 1500), let local = Relay.shared.open(c) {
                 if let d = devs.first(where: { $0.serial == local }), d.state != "device" { _ = adb(nil, ["disconnect", local], timeout: 5) }
                 let r2 = adb(nil, ["connect", local], timeout: 10).trimmingCharacters(in: .whitespacesAndNewlines)
                 logLine("discovery: through the relay \(local) -> \(c): \(r2)")
