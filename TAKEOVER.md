@@ -45,3 +45,12 @@ v19 (13.11.2026): the rotate button is drawn like MPA_ACADEMY_ANDROID Views.kt O
 - **Auto-rotate goes off when a phone connects** (its own value kept in UserDefaults autoRotate.<id>) and comes back, with portrait and apps deciding again, when the app quits or the tab is closed (seen in the log on quit: "phone restored").
 - Test hook: `open -g screencopy://rotate` = one press on the active tab.
 - Open: a phone unplugged while landscape stays landscape until the app sees it again (nothing can reach it). The relay lives inside the app, so the Wi-Fi route exists only while Screen Copy runs.
+
+## v22 (14.11.2026): Mac microphone to the phone (app/MicLink.swift), for TTT
+Marko: "go ahead and build our custom audio link with TTT". Protocol (fixed, TTT codes against it):
+- The app listens on TCP 127.0.0.1:8879 (loopback only). For every phone route whose stream starts the app runs `adb -s <serial> reverse tcp:8879 tcp:8879` (again on every reconnect, also over the Wi-Fi relay 127.0.0.1:port routes); on quit `reverse --remove tcp:8879`. On the phone 127.0.0.1:8879 reaches the Mac.
+- Client sends one line `TTT-MIC 1 <rate>\n` (8000..96000, e.g. 16000). Server answers `OK <rate> 1 s16le\n`, then raw PCM mono signed 16-bit little-endian at that rate in chunks of about 20 ms until the client closes. Bad line: `ERR bad-handshake\n` and close. No microphone permission: `ERR mic-permission\n` and close. Several clients at once get the same audio.
+- The Mac microphone (AVAudioEngine input tap on the DEFAULT input, no device is ever changed; channels averaged to mono, AVAudioConverter to the asked rate) is open only while at least one client is connected and closed 0.5 s after the last leaves (orange dot only while TTT records).
+- Info.plist NSMicrophoneUsageDescription. While the permission is missing an amber PERMISSIONS label top right (polled every 2 s); a click asks once (when not yet decided) and opens System Settings > Privacy > Microphone. The app never answers the macOS prompt.
+- Log (~/Library/Logs/ScreenCopyMantra.log): `miclink:` lines for listening, reverse applied/removed per phone, client connect/disconnect with rate, bytes per client every 5 s, microphone open/closed.
+- v22 also carries the start-up updater (app/Updater.swift from MANTRA_MANIFEST kits/mac-updater, repo MANTRA_SCREEN_COPY): from v23 on, the app asks "Do you want to update?" at start.

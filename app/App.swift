@@ -1,6 +1,7 @@
 import AppKit
 
-let VERSION = 21
+let VERSION = 22
+let APP_NAME = "Screen Copy (Mantra)"
 
 final class Tab {
     let phoneId: String
@@ -47,6 +48,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastUserVol = Date.distantPast
     var volBusy = false
     var lastVolPoll = Date.distantPast
+    let permBtn = NSButton(title: "", target: nil, action: nil)
+    var lastPermCheck = Date.distantPast
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -80,6 +83,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sliderRow = [slider, pvValue, rotBtn]
         for v in sliderRow { root.addSubview(v) }
         root.addSubview(status)
+        permBtn.isBordered = false
+        permBtn.attributedTitle = NSAttributedString(string: "PERMISSIONS", attributes: [.foregroundColor: NSColor(red: 0.91, green: 0.64, blue: 0.24, alpha: 1), .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold)])
+        permBtn.target = self; permBtn.action = #selector(permClicked)
+        permBtn.setAccessibilityLabel("PERMISSIONS")
+        permBtn.isHidden = true
+        root.addSubview(permBtn)
 
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -92,6 +101,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Discovery.shared.onChange = { [weak self] in self?.discoveryChanged() }
         Discovery.shared.start()
         restore()
+        MicLink.shared.start()
+        Updater.checkAtStart()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
     }
 
@@ -151,6 +162,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.frame = area
         center(sliderRow, y: bottom - 40, spacing: 12)
         status.frame = NSRect(x: 12, y: h / 2 - 9, width: w - 24, height: 18)
+        permBtn.frame = NSRect(x: w - 112, y: h - 28, width: 104, height: 20)
     }
     func center(_ views: [NSView], y: CGFloat, spacing: CGFloat) {
         var sizes: [NSSize] = []
@@ -499,7 +511,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    @objc func permClicked() { MicPermission.clicked(); lastPermCheck = .distantPast }
     func tick() {
+        if Date().timeIntervalSince(lastPermCheck) > 2 {
+            lastPermCheck = Date()
+            permBtn.isHidden = MicLink.allowed() || immersive
+            permBtn.frame = NSRect(x: root.bounds.width - 112, y: root.bounds.height - 28, width: 104, height: 20)
+        }
         refreshStatus()
         pollVolume()
         paintRotation()
@@ -533,6 +551,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for t in tabs { g.enter(); DispatchQueue.global().async { t.session.restorePhone(); g.leave() } }
         _ = g.wait(timeout: .now() + 7)
         for t in tabs { t.session.stop() }
+        MicLink.shared.removeAllReverse()
     }
 }
 

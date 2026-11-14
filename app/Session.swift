@@ -148,6 +148,7 @@ final class Session {
         let state = adb(serial, ["get-state"], timeout: 8).trimmingCharacters(in: .whitespacesAndNewlines)
         if state != "device" { logLine("\(serial): state '\(state)'"); return false }
         if !adb(serial, ["shell", "echo", "ok"], timeout: 6).contains("ok") { logLine("\(serial): shell does not answer"); return false }
+        MicLink.shared.applyReverse(serial)
         // auto-rotate goes off while the phone is connected: only the rotate button turns it (Marko, 14.11.2026).
         // Its own setting is kept once and put back when the app quits or the tab is closed.
         let key = "autoRotate.\(phoneId)"

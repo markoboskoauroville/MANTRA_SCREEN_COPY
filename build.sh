@@ -29,6 +29,7 @@ cat > "$APP/Contents/Info.plist" <<PL
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSLocalNetworkUsageDescription</key><string>Screen Copy talks to your phones over the local network.</string>
+<key>NSMicrophoneUsageDescription</key><string>Screen Copy sends the Mac microphone to your phone (TTT dictation) while the phone asks for it.</string>
 <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>Screen Copy</string><key>CFBundleURLSchemes</key><array><string>screencopy</string></array></dict></array>
 </dict></plist>
 PL
