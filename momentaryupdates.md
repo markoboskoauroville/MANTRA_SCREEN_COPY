@@ -47,3 +47,7 @@
 ## 13.11.2026, Marko, rotate everything (via the coordinator), v18
 
 "The problem with rotating the screen in screen copy mantra is that actual user interface of the screen copy is not rotating. Which is stupid. It's just the picture is rotating. Everything should rotate. Same experience as on a real phone."
+
+## 14.11.2026, Marko, rotation flips back and the Pixel on Wi-Fi is not found, v20
+
+"please work on debugging the screen copy by Mantra The application is very buggy now. I have two connections at the moment. One is cable. Pixel, nothing funny with the cable, and it's there. But I am trying now to change orientation. It's strange. Sometimes it's happening, sometimes it's not happening. Sometimes it changes rotation and then come back to the old rotation. When nothing is connected over ADB or whatever connection to the screen, automatic rotation should be off, so only manual rotation works. Take it off automatically when the connection is there. Also, Pixel phone is on the Wi-Fi, and the screen copy cannot find it. I don't know what you need to work together with Connection Keeper to find this route to Pixel 7, which is on Wi-Fi right now. The connection is Mantra, which is not connected. But is it connected? It is somehow. You need to figure it out, man. How to get to this Pixel 7? Build this now in the app. Bug the app. Stress test the app. All these functions go."
