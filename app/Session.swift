@@ -59,6 +59,16 @@ final class Session {
         if let sh = shell, sh.isRunning { sh.terminate() }
     }
 
+    /// The phone as it was before: portrait, apps decide again, its own auto-rotate setting.
+    func restorePhone() {
+        let key = "autoRotate.\(phoneId)"
+        guard !serial.isEmpty else { return }
+        let auto = UserDefaults.standard.string(forKey: key) ?? "0"
+        _ = adb(serial, ["shell", "cmd window set-ignore-orientation-request -d 0 false; cmd window fixed-to-user-rotation -d 0 default; cmd window user-rotation -d 0 lock 0; settings put system accelerometer_rotation \(auto)"], timeout: 6)
+        UserDefaults.standard.removeObject(forKey: key)
+        logLine("\(serial): phone restored (portrait, auto-rotate \(auto))")
+    }
+
     func stop() {
         running = false
         teardown()
@@ -138,6 +148,15 @@ final class Session {
         let state = adb(serial, ["get-state"], timeout: 8).trimmingCharacters(in: .whitespacesAndNewlines)
         if state != "device" { logLine("\(serial): state '\(state)'"); return false }
         if !adb(serial, ["shell", "echo", "ok"], timeout: 6).contains("ok") { logLine("\(serial): shell does not answer"); return false }
+        // auto-rotate goes off while the phone is connected: only the rotate button turns it (Marko, 14.11.2026).
+        // Its own setting is kept once and put back when the app quits or the tab is closed.
+        let key = "autoRotate.\(phoneId)"
+        if UserDefaults.standard.string(forKey: key) == nil {
+            let v = adb(serial, ["shell", "settings", "get", "system", "accelerometer_rotation"], timeout: 6).trimmingCharacters(in: .whitespacesAndNewlines)
+            if v == "0" || v == "1" { UserDefaults.standard.set(v, forKey: key) }
+        }
+        _ = adb(serial, ["shell", "settings", "put", "system", "accelerometer_rotation", "0"], timeout: 6)
+        logLine("\(serial): auto-rotate off while connected (the phone's own setting was \(UserDefaults.standard.string(forKey: key) ?? "?"))")
         let remote = "/data/local/tmp/scrcpy-server-mantra.jar"
         _ = adb(serial, ["shell", "pkill -f com.genymobile.scrcpy.Server; sleep 0.3"], timeout: 8)      // an old server from a dropped session may still hold the phone's audio and sockets
         let pushed = adb(serial, ["push", serverJarPath(), remote], timeout: 30)

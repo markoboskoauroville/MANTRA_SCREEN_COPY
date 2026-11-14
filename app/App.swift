@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 19
+let VERSION = 20
 
 final class Tab {
     let phoneId: String
@@ -234,7 +234,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard i >= 0, i < tabs.count else { return }
         let t = tabs.remove(at: i)
         closedIds.insert(t.phoneId)
-        t.session.stop(); t.view.removeFromSuperview()
+        let sess = t.session
+        DispatchQueue.global().async { sess.restorePhone(); sess.stop() }
+        t.view.removeFromSuperview()
         active = min(active, max(0, tabs.count - 1))
         save(); refreshTabs()
         if !tabs.isEmpty { select(active) }
@@ -349,13 +351,17 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // (The Mac listens pre-fader, so this never changes what you hear.)
     // Rotation: the phone is asked to turn (`cmd window user-rotation lock`, auto-rotate stays off). If the app in front
     // keeps the phone upright (the home screen does), the PICTURE is turned by the capture instead, so the view is landscape anyway.
+    // v20 (14.11.2026): a press is one request that is seen through. While it is on its way the button is dimmed and further
+    // presses wait (before, a second press 2-3 s later undid the first one: "it rotates and comes back"). The phone is asked
+    // (auto-rotate off, ignore-orientation-request, fixed-to-user-rotation, user-rotation lock), read back every 0.4 s for 5 s
+    // and asked again once if it did not turn; then for 20 s a guard puts it back if the phone or an app resets it.
     var wantLandscape: [String: Bool] = [:]
-    var rotBusy = false
-    var lastReconcile = Date.distantPast
+    var rotPending: [String: Date] = [:]          // phone id -> when the request was sent (dimmed button, presses ignored)
     @objc func toggleRotation() {
-        guard let s = cur(), s.width > 0 else { return }
-        let wasLandscape = wantLandscape[tabs[active].phoneId] ?? (s.width > s.height)      // the last thing asked, not the picture that is still catching up
-        rotate(wasLandscape ? 0 : 1)        // one press turns the phone the other way
+        guard let s = cur(), s.width > 0, tabs.indices.contains(active) else { return }
+        let id = tabs[active].phoneId
+        if let t = rotPending[id], Date().timeIntervalSince(t) < 6 { logLine("rotation \(id): press ignored, the last one is still on its way"); return }
+        rotate(s.width > s.height ? 0 : 1)        // one press turns the phone from what it really shows now
     }
     func realRotation(_ ser: String) -> Int? {
         let out = adb(ser, ["shell", "dumpsys window displays | grep -m1 mCurrentRotation"], timeout: 8)
@@ -363,22 +369,41 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let deg = Int(out[r.upperBound...].prefix(while: { $0.isNumber })) else { return nil }
         return deg >= 90 ? deg / 90 : deg          // ROTATION_90 is 1
     }
-    var lastRotate = Date.distantPast
+    static func askRotation(_ ser: String, _ n: Int) {
+        _ = adb(ser, ["shell", "settings put system accelerometer_rotation 0; cmd window set-ignore-orientation-request -d 0 \(n == 1 ? "true" : "false"); cmd window fixed-to-user-rotation -d 0 \(n == 1 ? "enabled" : "default"); settings put system user_rotation \(n); cmd window user-rotation -d 0 lock \(n)"], timeout: 10)
+    }
     func rotate(_ n: Int) {
-        if Date().timeIntervalSince(lastRotate) < 1.0 { return }      // repeated clicks: one change at a time
-        lastRotate = Date()
         guard tabs.indices.contains(active), !tabs[active].session.serial.isEmpty else { return }
         let t = tabs[active]
-        wantLandscape[t.phoneId] = (n == 1)
+        let id = t.phoneId
+        wantLandscape[id] = (n == 1)
+        rotPending[id] = Date()
+        rotBtn.landscape = (n == 1); rotBtn.alphaValue = 0.45
         let ser = t.session.serial
         DispatchQueue.global().async { [weak self] in
-            // the whole phone turns, like in the hand: rotation locked to 0 or 1, auto-rotate stays off, and in landscape the display
-            // is asked to ignore the portrait-only requests of apps and of the home screen (Android 12+)
-            _ = adb(ser, ["shell", "settings", "put", "system", "accelerometer_rotation", "0"], timeout: 8)
-            _ = adb(ser, ["shell", "cmd", "window", "set-ignore-orientation-request", "-d", "0", n == 1 ? "true" : "false"], timeout: 8)
-            _ = adb(ser, ["shell", "cmd", "window", "user-rotation", "-d", "0", "lock", "\(n)"], timeout: 8)
-            let real = self?.realRotation(ser)
-            logLine("rotation \(ser): lock \(n), ignore-orientation-request \(n == 1), real rotation after: \(real.map { String($0) } ?? "?")")
+            let t0 = Date()
+            Controller.askRotation(ser, n)
+            var real = self?.realRotation(ser)
+            var asked = 1
+            while real != n && Date().timeIntervalSince(t0) < 5 {
+                usleep(400_000)
+                real = self?.realRotation(ser)
+                if real != n && asked == 1 && Date().timeIntervalSince(t0) > 2.5 { Controller.askRotation(ser, n); asked = 2 }
+            }
+            let ms = Int(Date().timeIntervalSince(t0) * 1000)
+            logLine("rotation \(ser): asked \(n) (\(asked)x), real rotation \(real.map { String($0) } ?? "?") after \(ms) ms")
+            DispatchQueue.main.async { self?.rotPending[id] = nil; self?.rotBtn.alphaValue = 1 }
+            // the guard: for 20 s the phone is kept where it was asked to be
+            var fixes = 0
+            while Date().timeIntervalSince(t0) < 25 && fixes < 4 {
+                usleep(1_500_000)
+                guard let me = self, me.wantLandscape[id] == (n == 1) else { return }     // a newer press took over
+                if let r = me.realRotation(ser), r != n {
+                    fixes += 1
+                    logLine("rotation \(ser): the phone went back to \(r), asked \(n) again (guard \(fixes))")
+                    Controller.askRotation(ser, n)
+                }
+            }
         }
     }
     /// The window turns with the phone: its shape follows the picture, around the same centre.
@@ -398,6 +423,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func paintRotation() {
         guard let s = cur(), s.width > 0 else { return }
         let land = s.width > s.height
+        if tabs.indices.contains(active), rotPending[tabs[active].phoneId] != nil { return }      // the button shows the request until the picture follows
         if rotBtn.landscape != land { rotBtn.landscape = land }
         reshapeWindow(land)
     }
@@ -492,10 +518,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for u in urls where u.scheme == "screencopy" {
             if u.host == "tab", let n = Int(u.lastPathComponent) { panelShown = false; panel.isHidden = true; select(n - 1) }
             if u.host == "volume", let n = Int(u.lastPathComponent) { setPhoneVolume(n) }
+            if u.host == "rotate" { toggleRotation() }          // test hook: the same as a press on the button
             if u.host == "window" { logLine("window number \(window.windowNumber)") }
         }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ a: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { for t in tabs { t.session.stop() } }
+    func applicationWillTerminate(_ n: Notification) {
+        let g = DispatchGroup()
+        for t in tabs { g.enter(); DispatchQueue.global().async { t.session.restorePhone(); g.leave() } }
+        _ = g.wait(timeout: .now() + 7)
+        for t in tabs { t.session.stop() }
+    }
 }
 

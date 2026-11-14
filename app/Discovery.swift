@@ -16,6 +16,7 @@ func isTailscale(_ host: String) -> Bool {
 }
 
 func linkName2(_ serial: String) -> String {
+    if let t = Relay.shared.target(of: serial) { return linkName2(t) }        // a relay on 127.0.0.1 counts as the route behind it
     if serial.contains("_adb-tls") { return "Wi-Fi" }
     if !serial.contains(":") { return "USB" }
     return isTailscale(String(serial.split(separator: ":")[0])) ? "Tailscale" : "Wi-Fi"
@@ -135,7 +136,9 @@ final class Discovery {
     }
 
     private func findNetworkPhones() {
-        let known = Set(adbDevices().map { $0.serial })
+        let devs = adbDevices()
+        // an address already reached, directly or through our relay, is not connected again
+        let known = Set(devs.filter { $0.state == "device" }.map { Relay.shared.target(of: $0.serial) ?? $0.serial })
         var candidates: Set<String> = []
         // 1. wireless debugging announced by mDNS
         for line in adb(nil, ["mdns", "services"], timeout: 6).split(separator: "\n") where line.contains("_adb-tls-connect") {
@@ -163,8 +166,16 @@ final class Discovery {
             }
         }
         for c in candidates where !known.contains(c) {
-            let r = adb(nil, ["connect", c], timeout: 8)
-            logLine("discovery: adb connect \(c): \(r.trimmingCharacters(in: .whitespacesAndNewlines))")
+            let r = adb(nil, ["connect", c], timeout: 8).trimmingCharacters(in: .whitespacesAndNewlines)
+            logLine("discovery: adb connect \(c): \(r)")
+            if r.contains("connected to") && !r.contains("failed") { continue }
+            // the adb server cannot reach the LAN (no Local Network permission) but this app can: go through a local relay
+            let hp = c.split(separator: ":")
+            if hp.count == 2, let port = Int(hp[1]), tcpOpen(String(hp[0]), port, timeoutMs: 1500), let local = Relay.shared.open(c) {
+                if let d = devs.first(where: { $0.serial == local }), d.state != "device" { _ = adb(nil, ["disconnect", local], timeout: 5) }
+                let r2 = adb(nil, ["connect", local], timeout: 10).trimmingCharacters(in: .whitespacesAndNewlines)
+                logLine("discovery: through the relay \(local) -> \(c): \(r2)")
+            }
         }
     }
 }
