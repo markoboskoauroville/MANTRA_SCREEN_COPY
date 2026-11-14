@@ -73,3 +73,7 @@
 "Screen copy is taking the sound from this computer. But when I go to another, for example, I am now in my Pixel phone. I'm typing. I'm trying to record my audio on the Pixel phone, and it's connected to the microphone on the screen copy. I'm not able to write any messages. What a disaster! How can you not predict this? If I'm clicking on my Pixel phone to transcribe a message on my TTT, it should detect that I clicked on the phone, and it should take the microphone from the phone, not from the computer."
 
 **Rule:** the Mac microphone only when he drives that phone from the Mac (its Screen Copy tab in front with Mac input in the last seconds) and the H press came through Screen Copy; a finger on the glass always uses the phone microphone.
+
+## 14.11.2026, Marko, every TTT record button picks the mic like H (finger = phone, Screen Copy click = Mac)
+
+"please update the screen copy. It doesn't work good with TTT. Come on, you found out, and we found out that when I click on Remote, let's say on my Pixel phone, it's going to pick up the speaker from my MacBook Pro. You fix it. But there are more recording buttons in this application. You also have a recording button. It needs to behave the same"
