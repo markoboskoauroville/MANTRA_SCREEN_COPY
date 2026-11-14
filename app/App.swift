@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 23
+let VERSION = 24
 let APP_NAME = "Screen Copy (Mantra)"
 
 final class Tab {
@@ -525,7 +525,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshTabs()
         if Date().timeIntervalSince(lastLog) > 5 {
             lastLog = Date()
-            for t in tabs { logLine("\(t.title): \(t.session.status) \(t.session.width)x\(t.session.height) frames \(t.session.framesTotal) fps \(t.session.fps) \(t.session.audioState) packets \(t.session.audio.packets) level \(Int(t.session.audio.levelDb)) dB") }
+            for t in tabs { logLine("\(t.title): \(t.session.status) \(t.session.width)x\(t.session.height) frames \(t.session.framesTotal) fps \(t.session.fps) \(t.session.audioState) packets \(t.session.audio.packets) level \(Int(t.session.audio.levelDb)) dB \(t.session.audio.statsLine())") }
         }
     }
 
@@ -541,6 +541,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for u in urls where u.scheme == "screencopy" {
             if u.host == "tab", let n = Int(u.lastPathComponent) { panelShown = false; panel.isHidden = true; select(n - 1) }
             if u.host == "volume", let n = Int(u.lastPathComponent) { setPhoneVolume(n) }
+            if u.host == "audiorec", let n = Int(u.lastPathComponent), tabs.indices.contains(active) { tabs[active].session.audio.startRecording(seconds: max(1, min(120, n))) }
+            if u.host == "jitter", let n = Int(u.lastPathComponent) { for t in tabs { t.session.audio.setFixedTarget(ms: n) } }
             if u.host == "rotate" { toggleRotation() }          // test hook: the same as a press on the button
             if u.host == "window" { logLine("window number \(window.windowNumber)") }
         }
