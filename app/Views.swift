@@ -129,22 +129,26 @@ final class VideoView: NSView {
 
 /// The tab strip: one tab per phone (title, close), then +. Always centred.
 /// v29: the hairline meter of the TTT keyboard (MaRecordMeter.kt): 3 dp rounded track at 18 % tint, fill green / orange
-/// (> -12 dB) / red (> -3 dB), floor -54 dB, peak hold 2 px falling 0.6 dB per 60 ms. Phone sound is stereo, so (manifest
+/// (> -12 dB) / red (> -3 dB), floor -54 dB, peak hold 2 px held 10 s then dropping to the level. Phone sound is stereo, so (manifest
 /// vu-meter-mono-stereo) two thin bars with a small gap, no line, no labels.
 final class MeterView: NSView {
     var db: (Double, Double) = (-120, -120) { didSet { needsDisplay = true } }
     var dim = false { didSet { needsDisplay = true } }
     private var peak: (Double, Double) = (-54, -54)
-    private var lastPeak = Date()
     private static let floorDb = -54.0
     private func norm(_ d: Double) -> CGFloat { CGFloat(max(0, min(1, (d - Self.floorDb) / -Self.floorDb))) }
     private func colour(_ d: Double) -> NSColor {
         d > -3 ? NSColor(red: 0.608, green: 0.231, blue: 0.2, alpha: 1) : d > -12 ? NSColor(red: 0.941, green: 0.533, blue: 0.243, alpha: 1) : NSColor(red: 0.337, green: 0.827, blue: 0.392, alpha: 1)
     }
+    private var peakAt: (Date, Date) = (.distantPast, .distantPast)
+    /// v30 (Marko, 14.11.2026: "Hold must be long, at least 10 seconds"): the peak mark stays at the highest level for 10 s
+    /// (a higher peak restarts the 10 s), then drops to the current level; per channel.
+    static let holdSeconds = 10.0
     func step() {
-        let now = Date(); let k = max(1, now.timeIntervalSince(lastPeak) / 0.06) * 0.6; lastPeak = now
-        peak.0 = db.0 > peak.0 ? db.0 : max(Self.floorDb, peak.0 - k)
-        peak.1 = db.1 > peak.1 ? db.1 : max(Self.floorDb, peak.1 - k)
+        let now = Date()
+        if db.0 >= peak.0 { peak.0 = db.0; peakAt.0 = now } else if now.timeIntervalSince(peakAt.0) > Self.holdSeconds { peak.0 = max(db.0, Self.floorDb) }
+        if db.1 >= peak.1 { peak.1 = db.1; peakAt.1 = now } else if now.timeIntervalSince(peakAt.1) > Self.holdSeconds { peak.1 = max(db.1, Self.floorDb) }
+        peak.0 = max(peak.0, Self.floorDb); peak.1 = max(peak.1, Self.floorDb)
         needsDisplay = true
     }
     override var isFlipped: Bool { false }
