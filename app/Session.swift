@@ -29,6 +29,7 @@ final class Session {
     private var fpsCount = 0
     private var fpsStart = Date()
     private var running = false
+    private var useOpus = false
     private var cfd: Int32 = -1
     private var vfd: Int32 = -1
     private var afd: Int32 = -1
@@ -170,7 +171,17 @@ final class Session {
 
         let sh = Process()
         sh.executableURL = URL(fileURLWithPath: ADB)
-        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 audio_codec=raw audio_source=playback audio_dup=true max_size=1920 video_bit_rate=8000000 max_fps=60"
+        // v25: a Tailscale route (often the phone on mobile data through a DERP relay, 80-120 ms) carries everything in ONE
+        // adb TCP connection, so 8 Mbit/s video + 1.5 Mbit/s raw audio queued the audio behind video bursts (arrival gaps
+        // up to 740 ms). There: video 2 Mbit/s at 30 fps, sound Opus 128 kbit/s (raw again if this Mac cannot decode it).
+        let slow = linkName2(serial) == "Tailscale"
+        let rawOnly = UserDefaults.standard.bool(forKey: "rawAudio.\(phoneId)")
+        useOpus = slow && !rawOnly
+        audio.setRoute(slow: slow)
+        let media = slow ? "max_size=1600 video_bit_rate=2000000 max_fps=30" : "max_size=1920 video_bit_rate=8000000 max_fps=60"
+        let acodec = useOpus ? "audio_codec=opus audio_bit_rate=128000" : "audio_codec=raw"
+        logLine("\(serial): route \(linkName2(serial)): \(media) \(acodec)")
+        let opts = "scid=\(scidHex) log_level=info tunnel_forward=true video=true audio=true control=true video_codec=h264 \(acodec) audio_source=playback audio_dup=true \(media)"
         sh.arguments = ["-s", serial, "shell", "CLASSPATH=\(remote) app_process / com.genymobile.scrcpy.Server 4.1 \(opts)"]
         let pipe = Pipe()
         sh.standardOutput = pipe; sh.standardError = pipe
@@ -308,16 +319,35 @@ final class Session {
         let id = be32(cid, 0)
         if id == 0 { audioState = "AUDIO OFF (phone refused)"; logLine("\(serial): audio disabled by server"); return }
         if id == 1 { audioState = "AUDIO ERROR"; logLine("\(serial): audio configuration error. \(shellLog)"); return }
-        if id != 0x00726177 { audioState = "AUDIO CODEC?"; logLine("\(serial): unexpected audio codec \(String(format: "%08x", id))"); return }
-        audioState = "AUDIO ON"
+        let opus = id == 0x6f707573
+        if id != 0x00726177 && !opus { audioState = "AUDIO CODEC?"; logLine("\(serial): unexpected audio codec \(String(format: "%08x", id))"); return }
+        var dec: OpusDecoder?
+        if opus {
+            dec = OpusDecoder()
+            if dec == nil { fallBackToRaw("no Opus decoder on this Mac"); return }
+        }
+        audioState = opus ? "AUDIO ON (Opus)" : "AUDIO ON"
         setTimeout(fd, 0)
+        var packetsIn = 0, framesOut = 0, failures = 0
         while running {
             guard let h = readFully(fd, 12) else { audioState = "AUDIO OFF"; return }
             let size = Int(be32(h, 8))
             guard size >= 0, size < 4_000_000, let p = readFully(fd, size) else { audioState = "AUDIO OFF"; return }
-            if h[0] & 0x40 != 0 { continue }          // config packet (none for raw)
-            audio.feed(p)
+            if h[0] & 0x40 != 0 { continue }          // config packet (none for raw; OpusHead for Opus, not needed for 48 kHz stereo)
+            guard let d = dec else { audio.feed(p); continue }
+            packetsIn += 1
+            if let pcm = d.decode(p) { framesOut += pcm.count / 4; if !pcm.isEmpty { audio.feed(pcm) } } else { failures += 1 }
+            if packetsIn == 100 { logLine("\(serial): Opus: 100 packets in, \(framesOut) frames out, \(failures) failed") }
+            if packetsIn >= 50 && (framesOut == 0 || failures > packetsIn / 2) { fallBackToRaw("Opus decoding failed (\(failures) of \(packetsIn), \(framesOut) frames)"); return }
         }
+    }
+
+    /// The Mac could not decode Opus: remember it for this phone and start again with raw PCM.
+    private func fallBackToRaw(_ why: String) {
+        logLine("\(serial): \(why): raw audio from now on for this phone")
+        UserDefaults.standard.set(true, forKey: "rawAudio.\(phoneId)")
+        audioState = "AUDIO OFF"
+        reconnect()
     }
 
     // MARK: control

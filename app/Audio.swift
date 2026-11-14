@@ -36,6 +36,41 @@ func writeWav16(_ path: String, rate: Int, channels: Int, pcm: [Int16]) {
     try? h.write(to: URL(fileURLWithPath: path))
 }
 
+/// Opus (scrcpy audio_codec=opus, 48 kHz stereo, 20 ms packets) to 16-bit interleaved PCM by AudioToolbox (v25).
+final class OpusDecoder {
+    private let inFmt: AVAudioFormat
+    private let outFmt: AVAudioFormat
+    private let conv: AVAudioConverter
+    init?() {
+        var asbd = AudioStreamBasicDescription(mSampleRate: 48000, mFormatID: kAudioFormatOpus, mFormatFlags: 0, mBytesPerPacket: 0,
+            mFramesPerPacket: 960, mBytesPerFrame: 0, mChannelsPerFrame: 2, mBitsPerChannel: 0, mReserved: 0)
+        guard let i = AVAudioFormat(streamDescription: &asbd),
+              let o = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 48000, channels: 2, interleaved: true),
+              let c = AVAudioConverter(from: i, to: o) else { return nil }
+        inFmt = i; outFmt = o; conv = c
+    }
+    /// nil = this packet failed; [] = nothing out yet.
+    func decode(_ p: [UInt8]) -> [UInt8]? {
+        if p.isEmpty { return [] }
+        let cb = AVAudioCompressedBuffer(format: inFmt, packetCapacity: 1, maximumPacketSize: max(p.count, 1500))
+        p.withUnsafeBytes { _ = memcpy(cb.data, $0.baseAddress!, p.count) }
+        cb.byteLength = UInt32(p.count)
+        cb.packetCount = 1
+        cb.packetDescriptions?[0] = AudioStreamPacketDescription(mStartOffset: 0, mVariableFramesInPacket: 0, mDataByteSize: UInt32(p.count))
+        guard let out = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: 5760) else { return nil }
+        var given = false
+        var err: NSError?
+        let st = conv.convert(to: out, error: &err) { _, status in
+            if given { status.pointee = .noDataNow; return nil }
+            given = true; status.pointee = .haveData; return cb
+        }
+        if st == .error { return nil }
+        let n = Int(out.frameLength) * 4
+        guard n > 0, let ch = out.int16ChannelData else { return [] }
+        return Array(UnsafeRawBufferPointer(start: UnsafeRawPointer(ch[0]), count: n))
+    }
+}
+
 /// One phone's sound: a jitter buffer in front of the player (v24). Packets are queued; the player (a source node) starts when
 /// `target` ms are queued, on an underrun it plays silence (no click) and primes again, and the target grows by 50 ms per
 /// underrun up to 400 ms (back down by 25 ms after 30 s without one, never below 150 ms). More than target + 300 ms queued
@@ -48,6 +83,7 @@ final class AudioOut {
     private var primed = false
     private var fadeIn = 0
     private(set) var targetFrames = 7200            // 150 ms
+    private var maxTargetFrames = 19200              // 400 ms; 800 ms on a Tailscale route (v25)
     private var fixedTarget = 0                      // test hook: screencopy://jitter/<ms>, 0 = adaptive
     private var lastUnderrun = Date.distantPast, lastDecay = Date()
     private var lastArrival = Date.distantPast
@@ -68,6 +104,13 @@ final class AudioOut {
     }
 
     func apply() {}       // gain is applied in render()
+
+    /// Tailscale: arrival gaps reach 700 ms, so the buffer may grow to 800 ms (and starts at 300 ms); else 400 ms (from 150).
+    func setRoute(slow: Bool) {
+        lock.lock(); maxTargetFrames = slow ? 38400 : 19200
+        if fixedTarget == 0 { targetFrames = slow ? 14400 : 7200 }
+        lock.unlock()
+    }
 
     func setFixedTarget(ms: Int) {
         lock.lock(); fixedTarget = ms; if ms > 0 { targetFrames = ms * 48 } else { targetFrames = 7200 }; lock.unlock()
@@ -114,9 +157,10 @@ final class AudioOut {
         if now < recUntil { bytes.withUnsafeBytes { raw in let s = raw.bindMemory(to: Int16.self); recIn.append(contentsOf: s.prefix(frames * 2)) } }
         if !enabled { return }
         // never more than cap; a burst after a stall is trimmed so the sound stays live
-        let live = targetFrames + 14400
+        // v25: was target + 300 ms (the Pixel on Wi-Fi sat at 395 ms with a 150 ms target, never trimmed); now + 150 -> + 50 ms
+        let live = targetFrames + 7200
         if count + frames > live && primed {
-            let keep = targetFrames + 4800
+            let keep = targetFrames + 2400
             let drop = max(0, count + frames - keep)
             let d = min(drop, count); head = (head + d) % cap; count -= d; trims += 1
         }
@@ -148,7 +192,7 @@ final class AudioOut {
             head = rd; count -= n
             if n < frames {
                 primed = false; underruns += 1; totalUnderruns += 1; lastUnderrun = Date()
-                if fixedTarget == 0 { targetFrames = min(19200, targetFrames + 2400) }
+                if fixedTarget == 0 { targetFrames = min(maxTargetFrames, targetFrames + 2400) }
             }
             depthSum += Double(count + n) / 48; depthN += 1; depthMin = min(depthMin, count + n)
         }

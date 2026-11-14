@@ -1,5 +1,5 @@
 import AppKit
-// six letters over one picture (SCR / COP over a phone), amber "Mac tools" tile. Usage: make_icon <iconset dir>
+// six letters over one picture (SCR / CPY = scrcpy, over a phone), amber "Mac tools" tile. Usage: make_icon <iconset dir>
 let dir = CommandLine.arguments[1]
 func render(_ px: Int) -> Data {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8, samplesPerPixel: 4,
@@ -20,7 +20,7 @@ func render(_ px: Int) -> Data {
     }
     let font = NSFont.systemFont(ofSize: s * 0.2, weight: .black)
     let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white, .kern: s * 0.01]
-    for (i, word) in ["SCR", "COP"].enumerated() {
+    for (i, word) in ["SCR", "CPY"].enumerated() {
         let a = NSAttributedString(string: word, attributes: attrs)
         let sz = a.size()
         let cy = i == 0 ? s * 0.60 : s * 0.38
