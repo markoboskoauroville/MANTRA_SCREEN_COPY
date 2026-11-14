@@ -20,7 +20,6 @@ final class MicLink {
     private var clients: [Client] = []
     private var nextId = 1
     private var engine: AVAudioEngine?
-    private var converters: [Double: AVAudioConverter] = [:]
     private var inFormat: AVAudioFormat?
     private var monoBuf: AVAudioPCMBuffer?
     private var stopWork: DispatchWorkItem?
@@ -140,6 +139,7 @@ final class MicLink {
 
     private func logStats() {
         lock.lock(); let cs = clients; lock.unlock()
+        if inN > 0 { logLine("miclink: mic input rms \(Int(10 * log10(max(1e-12, inSq / Double(inN))))) dBFS, peak \(peak)"); inSq = 0; inN = 0; peak = 0 }
         for c in cs { logLine("miclink: client #\(c.id) \(Int(c.rate)) Hz, \(c.intervalBytes) bytes in 5 s, \(c.bytes) total"); c.intervalBytes = 0 }
     }
 
@@ -152,8 +152,8 @@ final class MicLink {
         let f = input.outputFormat(forBus: 0)
         guard f.sampleRate > 0, f.channelCount > 0 else { logLine("miclink: default input has no format"); return }
         inFormat = f
-        converters = [:]
-        monoBuf = nil
+        lock.lock(); resamplers = [:]; lock.unlock()
+        monoBuf = nil; wavData = Data(); wavDone = false
         lock.lock(); let rates = Set(clients.map { $0.rate }); lock.unlock()
         for r in rates { ensureConverter(r) }
         input.installTap(onBus: 0, bufferSize: 1024, format: f) { [weak self] buf, _ in self?.onBuffer(buf) }
@@ -177,18 +177,48 @@ final class MicLink {
         guard n == 0, let e = engine else { return }
         NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: e)
         e.inputNode.removeTap(onBus: 0); e.stop(); engine = nil
-        lock.lock(); converters = [:]; lock.unlock()
+        lock.lock(); resamplers = [:]; lock.unlock()
         logLine("miclink: microphone closed (no client)")
     }
 
+    /// Streaming box-filter resampler (Float mono at the input rate to Float at `rate`), done by hand.
+    final class Resampler {
+        let ratio: Double; var pending: [Float] = []; var pos = 0.0
+        init(inRate: Double, outRate: Double) { ratio = inRate / outRate }
+        func process(_ x: UnsafePointer<Float>, _ n: Int) -> [Float] {
+            pending.append(contentsOf: UnsafeBufferPointer(start: x, count: n))
+            var out: [Float] = []
+            while pos + ratio <= Double(pending.count) {
+                let a = pos, b = pos + ratio
+                var i = Int(a.rounded(.down)); var acc = 0.0
+                while Double(i) < b {
+                    let lo = max(a, Double(i)), hi = min(b, Double(i + 1))
+                    acc += Double(pending[i]) * (hi - lo); i += 1
+                }
+                out.append(Float(acc / ratio)); pos = b
+            }
+            let drop = Int(pos.rounded(.down))
+            if drop > 0 { pending.removeFirst(drop); pos -= Double(drop) }
+            return out
+        }
+    }
+    private var resamplers: [Double: Resampler] = [:]
+    private var inSq = 0.0, inN = 0, peak: Float = 0
+    private var wavData = Data(); private var wavDone = false
     private func ensureConverter(_ rate: Double) {
         guard let f = inFormat else { return }
         lock.lock(); defer { lock.unlock() }
-        if converters[rate] != nil { return }
-        guard let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: f.sampleRate, channels: 1, interleaved: false),
-              let out = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: rate, channels: 1, interleaved: true),
-              let cv = AVAudioConverter(from: mono, to: out) else { logLine("miclink: no converter for \(Int(rate)) Hz"); return }
-        converters[rate] = cv
+        if resamplers[rate] == nil { resamplers[rate] = Resampler(inRate: f.sampleRate, outRate: rate) }
+    }
+    private func writeWav(rate: Int, pcm: Data) {
+        var h = Data()
+        func u32(_ v: Int) { var x = UInt32(v).littleEndian; h.append(Data(bytes: &x, count: 4)) }
+        func u16(_ v: Int) { var x = UInt16(v).littleEndian; h.append(Data(bytes: &x, count: 2)) }
+        h.append("RIFF".data(using: .ascii)!); u32(36 + pcm.count); h.append("WAVEfmt ".data(using: .ascii)!)
+        u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16)
+        h.append("data".data(using: .ascii)!); u32(pcm.count)
+        try? (h + pcm).write(to: URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/ScreenCopyMicLink.wav"))
+        logLine("miclink: first 2 s of the sent audio written to ~/Library/Logs/ScreenCopyMicLink.wav")
     }
 
     private func onBuffer(_ buf: AVAudioPCMBuffer) {
@@ -206,29 +236,24 @@ final class MicLink {
             for i in 0..<frames { var s: Float = 0; for c in 0..<ch { s += src[c][i] }; dst[i] = s / Float(ch) }
         }
         mb.frameLength = AVAudioFrameCount(frames)
-        lock.lock(); let cs = clients; let cvs = converters; lock.unlock()
-        var done = Set<Double>()
-        for c in cs {
-            if !done.contains(c.rate) { done.insert(c.rate) }
-        }
+        for i in 0..<frames { let v = dst[i]; inSq += Double(v * v); if abs(v) > peak { peak = abs(v) } }; inN += frames
+        lock.lock(); let cs = clients; let rss = resamplers; lock.unlock()
         var pcm: [Double: Data] = [:]
-        for r in done {
-            guard let cv = cvs[r], let outF = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: r, channels: 1, interleaved: true) else { continue }
-            let cap = AVAudioFrameCount(Double(frames) * r / f.sampleRate + 64)
-            guard let ob = AVAudioPCMBuffer(pcmFormat: outF, frameCapacity: cap) else { continue }
-            var fed = false
-            var err: NSError?
-            cv.convert(to: ob, error: &err) { _, st in
-                if fed { st.pointee = .noDataNow; return nil }
-                fed = true; st.pointee = .haveData; return mb
-            }
-            if err != nil || ob.frameLength == 0 { continue }
-            pcm[r] = Data(bytes: ob.int16ChannelData![0], count: Int(ob.frameLength) * 2)
+        for r in Set(cs.map { $0.rate }) {
+            guard let rs = rss[r] else { continue }
+            let fl = rs.process(UnsafePointer(dst), frames)
+            if fl.isEmpty { continue }
+            var i16 = [Int16](repeating: 0, count: fl.count)
+            for k in 0..<fl.count { i16[k] = Int16(max(-1, min(1, fl[k])) * 32767) }
+            pcm[r] = i16.withUnsafeBytes { Data($0) }       // little-endian on this Mac
         }
         for c in cs {
             guard let d = pcm[c.rate] else { continue }
             let ok = d.withUnsafeBytes { sendAll(c.fd, $0.baseAddress!, d.count) }
-            if ok { c.bytes += d.count; c.intervalBytes += d.count }
+            if ok {
+                c.bytes += d.count; c.intervalBytes += d.count
+                if !wavDone { wavData.append(d); if wavData.count >= Int(c.rate) * 4 { wavDone = true; writeWav(rate: Int(c.rate), pcm: wavData) } }
+            }
             else { Darwin.shutdown(c.fd, SHUT_RDWR) }      // the client's thread sees the close and removes it
         }
     }
