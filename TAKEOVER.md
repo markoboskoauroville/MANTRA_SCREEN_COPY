@@ -79,3 +79,6 @@ Marko: "If I'm clicking on my Pixel phone to transcribe a message on my TTT, it 
 - Test hook: `open screencopy://tap/<x>/<y>` = one Mac click on the active tab (phone pixels).
 - Verified 14.11.2026: both phones' handshakes with Screen Copy in the background answer `NO screen-copy-not-front` (280-297 ms over Tailscale); Screen Copy front + H clicked in the Nothing tab = "client #1 (0005534BC000140) connected ... allowed: driven from the Mac", 323,200 bytes, text landed. Marko's own finger on the Pixel never reached the link (TTT 675 classed it FINGER).
 - 14.11.2026, all TTT recording buttons (Marko: "It needs to behave the same"): no Screen Copy change was needed (v27 stays). The gate is checked once at the handshake, which happens at the press-down, so the 5 s "recent Mac input" window also covers hold-to-talk. TTT build 677 extends the finger/remote rule to the RE chat record button and the bubble. Untested: those buttons through Screen Copy on both phones, and the Pixel tab through Screen Copy (see TTT TAKEOVER.md).
+
+## v28 (14.11.2026)
+Discovery.swift no longer drops emulator-* serials; the emulator gets the name "Pixel 7 emulator" and its own tab (local adb, no wireless debugging needed). Seen live: three tabs, emulator 864x1920.
