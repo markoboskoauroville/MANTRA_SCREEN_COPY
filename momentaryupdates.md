@@ -67,3 +67,9 @@
 ## 14.11.2026, Marko, black icon background (v26)
 
 "screen copy should have a black background in the icon, like other apps with a black background. Please make it."
+
+## 14.11.2026, Marko, BUG: the Mac mic took over a dictation made on the phone itself (Screen Copy v27 + TTT)
+
+"Screen copy is taking the sound from this computer. But when I go to another, for example, I am now in my Pixel phone. I'm typing. I'm trying to record my audio on the Pixel phone, and it's connected to the microphone on the screen copy. I'm not able to write any messages. What a disaster! How can you not predict this? If I'm clicking on my Pixel phone to transcribe a message on my TTT, it should detect that I clicked on the phone, and it should take the microphone from the phone, not from the computer."
+
+**Rule:** the Mac microphone only when he drives that phone from the Mac (its Screen Copy tab in front with Mac input in the last seconds) and the H press came through Screen Copy; a finger on the glass always uses the phone microphone.
