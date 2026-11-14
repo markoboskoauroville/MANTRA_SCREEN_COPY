@@ -85,3 +85,7 @@
 ## 14.11.2026, Marko, addition to v29: a meter at each tab
 
 "and also build a small meter at each step. If sound is coming, I want to see the meter running the same hairline meter we have on the TTT keyboard"
+
+## 14.11.2026, Marko, v30: peak hold at least 10 seconds
+
+"yes, the test is working, and please add one more thing, which is hold and hold. Hold must be long, at least 10 seconds"
