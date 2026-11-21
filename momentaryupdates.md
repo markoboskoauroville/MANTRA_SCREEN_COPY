@@ -89,3 +89,9 @@
 ## 14.11.2026, Marko, v30: peak hold at least 10 seconds
 
 "yes, the test is working, and please add one more thing, which is hold and hold. Hold must be long, at least 10 seconds"
+
+## 21.11.2026, Marko, v31: built-in sound recorder per tab
+
+"in the future connect to the virtual pixel using our remote connection app for phones ... Screen copy mantra. Please switch the application and then update code using Microsoft Code Agent so it can record the screen. chord, you build in recorder and on the tab there will be a red dot blinking on the tab at the top it means it's recording the sound and you can after each song you can stop recording pause it rename and go to the next one"
+
+(Dictation: "record the screen. chord" = record the SOUND.)
