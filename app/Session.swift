@@ -36,6 +36,7 @@ final class Session {
     private var vfd: Int32 = -1
     private var afd: Int32 = -1
     private var shell: Process?
+    private var shellPipe: Pipe?
     private var shellLog = ""
     private let ctlLock = NSLock()
     private var sps: [UInt8] = [], pps: [UInt8] = []
@@ -106,10 +107,23 @@ final class Session {
     private func teardown() {
         for fd in [vfd, afd, cfd] where fd >= 0 { Darwin.shutdown(fd, SHUT_RDWR); close(fd) }
         vfd = -1; afd = -1; cfd = -1
-        if let sh = shell, sh.isRunning { sh.terminate() }
+        if let sh = shell {
+            sh.terminationHandler = nil
+            if sh.isRunning { sh.terminate() }
+        }
         shell = nil
+        closeShellPipe()
         if fwdPort != 0, !serial.isEmpty { _ = adb(serial, ["forward", "--remove", "tcp:\(fwdPort)"], timeout: 5); fwdPort = 0 }
         audio.silence()
+    }
+
+    private func closeShellPipe(_ pipe: Pipe? = nil) {
+        let target = pipe ?? shellPipe
+        guard let target else { return }
+        target.fileHandleForReading.readabilityHandler = nil
+        try? target.fileHandleForWriting.close()
+        try? target.fileHandleForReading.close()
+        if shellPipe === target { shellPipe = nil }
     }
 
     private func connectSocket(_ port: Int) -> Int32 {
@@ -187,13 +201,21 @@ final class Session {
         sh.arguments = ["-s", serial, "shell", "CLASSPATH=\(remote) app_process / com.genymobile.scrcpy.Server 4.1 \(opts)"]
         let pipe = Pipe()
         sh.standardOutput = pipe; sh.standardError = pipe
+        shellPipe = pipe
         shellLog = ""
         pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
-            if d.isEmpty { h.readabilityHandler = nil; return }
+            if d.isEmpty { h.readabilityHandler = nil; try? h.close(); return }
             if let s = String(data: d, encoding: .utf8) { self?.shellLog += s; logLine("\(self?.serial ?? "?") server: \(s.trimmingCharacters(in: .whitespacesAndNewlines))") }
         }
-        do { try sh.run() } catch { logLine("shell: \(error)"); return false }
+        sh.terminationHandler = { [weak self] _ in self?.closeShellPipe(pipe) }
+        do { try sh.run() } catch {
+            sh.terminationHandler = nil
+            closeShellPipe(pipe)
+            logLine("shell: \(error)")
+            return false
+        }
+        try? pipe.fileHandleForWriting.close()
         shell = sh
 
         // video socket first (it carries the dummy byte), then audio, then control

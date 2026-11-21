@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 31
+let VERSION = 32
 let APP_NAME = "Screen Copy (Mantra)"
 
 final class Tab {
@@ -45,6 +45,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
     var rotBtn: RoundIconButton!
     var timer: Timer?
     var lastLog = Date()
+    var lastFdLog = Date.distantPast
     var immersive = false
     var closedIds = Set<String>()
     var lastMouse = Date()
@@ -927,6 +928,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
 
     @objc func permClicked() { MicPermission.clicked(); lastPermCheck = .distantPast }
     func tick() {
+        if Date().timeIntervalSince(lastFdLog) >= 60 {
+            lastFdLog = Date()
+            if let entries = try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd") {
+                logLine("open file descriptors: \(entries.count)")
+            } else {
+                logLine("open file descriptors: unavailable")
+            }
+        }
         if Date().timeIntervalSince(lastPermCheck) > 2 {
             lastPermCheck = Date()
             permBtn.isHidden = MicLink.allowed() || immersive

@@ -107,16 +107,10 @@ enum Updater {
 
     @discardableResult
     static func run(_ exe: String, _ args: [String]) -> String? {
-        let p = Process(), out = Pipe()
-        p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
-        p.standardOutput = out; p.standardError = FileHandle.nullDevice
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"; env["GH_PROMPT_DISABLED"] = "1"
-        p.environment = env
-        do { try p.run() } catch { return nil }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        let result = runCmd(exe, args, timeout: 600, environment: env, includeStderr: false)
+        return result.0 == 0 ? result.1 : nil
     }
 
     static func log(_ s: String) { NSLog("[Updater] %@", s) }

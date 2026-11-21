@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 let ADB = NSHomeDirectory() + "/Library/Android/sdk/platform-tools/adb"
 
@@ -10,20 +11,39 @@ func logLine(_ s: String) {
     else { try? line.write(toFile: path, atomically: true, encoding: .utf8) }
 }
 
-/// Runs a program and returns (status, stdout+stderr). Killed after `timeout` seconds.
+/// Runs a program and returns (status, stdout, optionally with stderr). Killed after `timeout` seconds.
 @discardableResult
-func runCmd(_ path: String, _ args: [String], timeout: Double = 20) -> (Int32, String) {
+func runCmd(_ path: String, _ args: [String], timeout: Double = 20,
+            environment: [String: String]? = nil, includeStderr: Bool = true) -> (Int32, String) {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: path)
     p.arguments = args
+    if let environment { p.environment = environment }
     let pipe = Pipe()
-    p.standardOutput = pipe; p.standardError = pipe
-    do { try p.run() } catch { return (-1, "\(error)") }
-    let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+    p.standardOutput = pipe
+    p.standardError = includeStderr ? pipe : FileHandle.nullDevice
+    func cleanup() {
+        pipe.fileHandleForReading.readabilityHandler = nil
+        try? pipe.fileHandleForWriting.close()
+        try? pipe.fileHandleForReading.close()
+        p.terminationHandler = nil
+    }
+    do { try p.run() } catch {
+        cleanup()
+        return (-1, "\(error)")
+    }
+    try? pipe.fileHandleForWriting.close()
+    let killer = DispatchWorkItem {
+        guard p.isRunning else { return }
+        p.terminate()
+        Thread.sleep(forTimeInterval: 0.5)
+        if p.isRunning { Darwin.kill(p.processIdentifier, SIGKILL) }
+    }
     DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
     killer.cancel()
+    cleanup()
     return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
 }
 
