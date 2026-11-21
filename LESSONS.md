@@ -19,3 +19,8 @@
 - The recorder takes the PCM in AudioOut.feed BEFORE mute and volume, so MONITOR off (muted on the Mac) still records; it never touches the Mac's audio device (default output stayed "ADAM Audio D3V  " before and after).
 - Test caveat: a recording test needs something playing on the phone; an idle emulator gives a valid, all-zero WAV (RMS 0). Do not press in the emulator's apps to make sound while another worker records from it.
 - Known cosmetic: the red dot sits close to the first letter of the tab title.
+
+## v32 (21.11.2026): the pipe leak
+- Symptom: PIPE fds grew ~18/min idle (2,540 after an hour), then record start, status-file writes (Cocoa 512) and captures failed. lsof showed single unpaired pipe ends: the parent's write end of every Pipe() given to a Process was never closed (Foundation leaves it open until the Pipe deallocates, which did not happen reliably).
+- Root cause: app/Adb.swift runCmd() (every adb call, discovery every 6 s, tailscale status) and Updater.run, plus the long-lived scrcpy `adb shell` pipe in Session.swift. Fix: runCmd closes the write end right after run(), closes the read end after waitUntilExit, SIGTERM then SIGKILL on timeout; Updater.run uses runCmd; the scrcpy shell pipe is kept in shellPipe and closed on termination/teardown. The app logs "open file descriptors: N" every 60 s.
+- Rule: every Process with a Pipe goes through runCmd; never a second hand-rolled Process. Written by MAI Code 2 in one run (164 s), reviewed by Claude, green on the first CI run.

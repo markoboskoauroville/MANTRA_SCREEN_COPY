@@ -104,3 +104,6 @@ Marko: "yes, the test is working, and please add one more thing, which is hold a
 - `POST /tab/select` accepts `{"tab":N}`. `POST /tap` accepts `{"x":X,"y":Y}`, `POST /key` accepts an Android keycode in `{"code":CODE}`, and `POST /text` accepts `{"text":"..."}`; input goes to the active tab.
 - Errors use a non-2xx status and `{"ok":false,"error":"..."}`. No external network calls are used.
 - Python 3 client (`urllib` only): install with `./python/install.sh`, then run `screencopy tabs`, `screencopy status`, `screencopy record start --serial emulator-5556 --name "01 Title"`, `screencopy record pause`, `screencopy record next --name "02 Next"`, `screencopy monitor off`, `screencopy tab select 2`, `screencopy tap 400 900`, `screencopy key 4`, or `screencopy text "hello"`.
+
+## v32 (21.11.2026)
+Fixed the PIPE fd leak (~18/min): one shared `runCmd` in app/Adb.swift closes both pipe ends and kills on timeout; Updater.run and the scrcpy shell pipe follow it. The log shows `open file descriptors: N` every 60 s; expect about 50-110, flat. See LESSONS v32.
