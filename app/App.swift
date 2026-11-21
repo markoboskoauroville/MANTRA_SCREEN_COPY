@@ -799,7 +799,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         let base = current.isEmpty ? t.nextRecordingName : current
         _ = stopRecordingFor(t)
         recordingChanged()
-        let next = name?.trimmingCharacters(in: .whitespacesAndNewlines).flatMap { $0.isEmpty ? nil : $0 } ?? Recorder.nextName(after: base)
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next: String
+        if let trimmed = trimmed, !trimmed.isEmpty {
+            next = trimmed
+        } else {
+            next = Recorder.nextName(after: base)
+        }
         return try recordStart(tab: index, name: next)
     }
 
