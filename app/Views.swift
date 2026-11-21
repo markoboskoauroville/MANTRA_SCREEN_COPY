@@ -171,6 +171,7 @@ final class TabBar: NSView {
     var live: [Bool] = [] { didSet { if live != oldValue { rebuild() } } }
     var titles: [String] = [] { didSet { if titles != oldValue { rebuild() } } }
     var selected = 0 { didSet { if selected != oldValue { rebuild() } } }
+    var recordingStates: [RecorderState] = [] { didSet { if recordingStates != oldValue { rebuild() } } }
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
     var onAdd: ((NSView) -> Void)?
@@ -179,6 +180,7 @@ final class TabBar: NSView {
     private var line = hairline()
     private var under = NSView()
     private(set) var meters: [MeterView] = []
+    private var recordDots: [NSView] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -197,17 +199,29 @@ final class TabBar: NSView {
         items = []
         for m in meters { m.removeFromSuperview() }
         meters = []
+        for d in recordDots { d.removeFromSuperview() }
+        recordDots = []
         for (i, t) in titles.enumerated() {
             let b = WordButton(t, target: self, action: #selector(tabTapped(_:)))
             b.tag = i
             let isLive = i < live.count ? live[i] : true
             b.normal = !isLive ? NSColor(white: 0.32, alpha: 1) : ((i == selected) ? BRIGHT : DIM)
-            b.setAccessibilityLabel("Tab \(t)")
+            let state = i < recordingStates.count ? recordingStates[i] : .idle
+            let recordingLabel = state == .recording ? ", Recording" : (state == .paused ? ", Recording paused" : "")
+            b.setAccessibilityLabel("Tab \(t)\(recordingLabel)")
             let x = WordButton("✕", target: self, action: #selector(closeTapped(_:)))
             x.tag = i; x.normal = DIM
             x.setAccessibilityLabel("Close tab \(t)")
             addSubview(b); addSubview(x)
             let m = MeterView(); m.setAccessibilityElement(false); addSubview(m); meters.append(m)
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = NSColor.systemRed.cgColor
+            dot.layer?.cornerRadius = 4
+            dot.isHidden = state != .recording && state != .paused
+            dot.setAccessibilityElement(false)
+            addSubview(dot, positioned: .above, relativeTo: b)
+            recordDots.append(dot)
             items += [b, x]
         }
         needsLayout = true
@@ -223,6 +237,7 @@ final class TabBar: NSView {
             let b = items[2 * i] as! WordButton, c = items[2 * i + 1] as! WordButton
             let cw: CGFloat = 20
             b.frame = NSRect(x: x, y: 10, width: tabW - cw, height: h - 14)
+            if i < recordDots.count { recordDots[i].frame = NSRect(x: x + 5, y: h - 25, width: 8, height: 8) }
             if i < meters.count { meters[i].frame = NSRect(x: x + 8, y: 4, width: max(10, tabW - cw - 16), height: 5) }
             b.alignment = .center
             b.lineBreakMode = .byTruncatingTail
@@ -233,6 +248,15 @@ final class TabBar: NSView {
         under.isHidden = n == 0
         plus.frame = NSRect(x: x, y: 4, width: 28, height: h - 8)
         line.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 1)
+    }
+
+    func stepRecordingDots() {
+        let on = Int(Date().timeIntervalSince1970 * 2) % 2 == 0
+        for (i, dot) in recordDots.enumerated() {
+            let state = i < recordingStates.count ? recordingStates[i] : .idle
+            dot.isHidden = state != .recording && state != .paused
+            dot.alphaValue = state == .paused ? 1 : (on ? 1 : 0.18)
+        }
     }
 }
 

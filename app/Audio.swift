@@ -76,6 +76,7 @@ final class OpusDecoder {
 /// underrun up to 400 ms (back down by 25 ms after 30 s without one, never below 150 ms). More than target + 300 ms queued
 /// (a burst after a stall) is trimmed to target + 100 ms so the sound stays live; never more than 2 s are held.
 final class AudioOut {
+    let recorder = Recorder()
     private let lock = NSLock()
     private let cap = 96000
     private var ringL = [Float](repeating: 0, count: 96000), ringR = [Float](repeating: 0, count: 96000)
@@ -138,6 +139,7 @@ final class AudioOut {
     func feed(_ bytes: [UInt8]) {
         let frames = bytes.count / 4
         if frames == 0 { return }
+        recorder.write(bytes)
         if !attached { AudioHub.shared.attach(src); attached = true }
         var l = [Float](repeating: 0, count: frames), r = [Float](repeating: 0, count: frames)
         var sum: Double = 0, sumL: Double = 0, sumR: Double = 0
@@ -221,5 +223,8 @@ final class AudioOut {
     func silence() {
         lock.lock(); primed = false; count = 0; head = 0; lock.unlock()
     }
-    func close() { if attached { AudioHub.shared.detach(src); attached = false } }
+    func close() {
+        recorder.stop()
+        if attached { AudioHub.shared.detach(src); attached = false }
+    }
 }

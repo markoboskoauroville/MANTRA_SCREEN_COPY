@@ -91,3 +91,16 @@ Marko: "Mantra V28 should be V29 I need a speaker in upper right corner, which w
 
 ## v30 (14.11.2026): peak hold 10 seconds
 Marko: "yes, the test is working, and please add one more thing, which is hold and hold. Hold must be long, at least 10 seconds". In MeterView the 2 px peak mark of each channel bar (per tab) stays at the highest level for 10 s (MeterView.holdSeconds); a higher peak restarts the 10 s; then it drops to the current level. Everything else as v29.
+
+## v31: per-tab sound recorder
+- Every tab has its own `Recorder`, fed from the raw 16-bit 48 kHz stereo PCM before Mac mute or volume. Takes stream to `~/Music/Screen Copy Recordings/<phone>/<name>.wav`; pause continues the same WAV and stop patches its RIFF sizes. Existing files are never overwritten (the next suffix is ` 2`, ` 3`, etc.).
+- REC / PAUSE (RESUME) / STOP / NEXT / RENAME and an editable take name live on the bottom control line (a second line at narrow widths), with elapsed time and a per-tab MONITOR switch. Recording starts monitor-off and restores the tab's earlier mute state on stop. The tab title has a recording dot, blinking for recording and steady for pause.
+- Status is an array at `~/Library/Application Support/ScreenCopyMantra/record_status.json`, rewritten every second and on recorder changes. Record URL syntax: `screencopy://record/start?tab=N&name=...`, `/pause?tab=N`, `/resume?tab=N`, `/stop?tab=N`, `/next?tab=N&name=...`, and `/rename?tab=N&from=...&to=...` (`tab` is optional and 1-based).
+
+## v31 control API
+- `ControlServer.swift` serves HTTP/JSON on `127.0.0.1` only. It prefers port 8883 and tries through 8898; the selected port is written as the number in `~/.mantra/ports/screen-copy`. Every request uses `Connection: close`, JSON bodies declare `Content-Length`, and application state changes run on the main thread.
+- `GET /tabs` returns `[{tab, phone, serial, connected, active}]`. `GET /status` returns the same array as `record_status.json`: tab, phone, recorder state, name, file, elapsed seconds and RMS level.
+- `POST /record/start` accepts `{tab|serial, name}`. `/record/pause`, `/record/resume`, `/record/stop` and `/record/next` accept `{tab|serial}`; `/record/next` also accepts an optional `name`. `/record/rename` accepts `{tab|serial, from, to}`. `/record/monitor` accepts `{tab|serial, on}` with a JSON boolean. An omitted tab and serial means the active tab. These endpoints return `{"ok":true,"recording":...,"status":[...]}`.
+- `POST /tab/select` accepts `{"tab":N}`. `POST /tap` accepts `{"x":X,"y":Y}`, `POST /key` accepts an Android keycode in `{"code":CODE}`, and `POST /text` accepts `{"text":"..."}`; input goes to the active tab.
+- Errors use a non-2xx status and `{"ok":false,"error":"..."}`. No external network calls are used.
+- Python 3 client (`urllib` only): install with `./python/install.sh`, then run `screencopy tabs`, `screencopy status`, `screencopy record start --serial emulator-5556 --name "01 Title"`, `screencopy record pause`, `screencopy record next --name "02 Next"`, `screencopy monitor off`, `screencopy tab select 2`, `screencopy tap 400 900`, `screencopy key 4`, or `screencopy text "hello"`.

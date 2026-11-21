@@ -1,6 +1,6 @@
 import AppKit
 
-let VERSION = 30
+let VERSION = 31
 let APP_NAME = "Screen Copy (Mantra)"
 
 final class Tab {
@@ -8,8 +8,12 @@ final class Tab {
     var name: String
     let session: Session
     let view: VideoView
+    var nextRecordingName: String
+    var recordingMonitor = false
+    var muteBeforeRecording: Bool?
     init(phoneId: String, name: String) {
         self.phoneId = phoneId; self.name = name
+        self.nextRecordingName = Recorder.defaultName(phone: name)
         let pid = phoneId
         session = Session(phoneId: phoneId, routes: { Discovery.shared.routes(pid) })
         view = VideoView(session: session)
@@ -25,7 +29,7 @@ final class Root: NSView {
     override func layout() { super.layout(); owner?.layoutAll() }
 }
 
-final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
     var window: NSWindow!
     let root = Root()
     let tabBar = TabBar()
@@ -52,6 +56,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var meterTimer: Timer?
     let permBtn = NSButton(title: "", target: nil, action: nil)
     var lastPermCheck = Date.distantPast
+    var recBtn: WordButton!
+    var pauseRecBtn: WordButton!
+    var stopRecBtn: WordButton!
+    var nextRecBtn: WordButton!
+    var renameRecBtn: WordButton!
+    var monitorRecBtn: WordButton!
+    let recordNameField = NSTextField()
+    let recordElapsed = label("00:00", size: 11, color: BRIGHT)
+    var recordRow: [NSView] = []
+    var lastRecordStatusWrite = Date.distantPast
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -85,6 +99,30 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sliderRow = [slider, pvValue, rotBtn]
         for v in sliderRow { root.addSubview(v) }
         root.addSubview(status)
+        recBtn = WordButton("REC", target: self, action: #selector(recordClicked))
+        pauseRecBtn = WordButton("PAUSE", target: self, action: #selector(pauseRecordingClicked))
+        stopRecBtn = WordButton("STOP", target: self, action: #selector(stopRecordingClicked))
+        nextRecBtn = WordButton("NEXT", target: self, action: #selector(nextRecordingClicked))
+        renameRecBtn = WordButton("RENAME", target: self, action: #selector(renameRecordingClicked))
+        monitorRecBtn = WordButton("MONITOR", target: self, action: #selector(monitorRecordingClicked))
+        recBtn.setAccessibilityLabel("Record")
+        pauseRecBtn.setAccessibilityLabel("Pause recording")
+        stopRecBtn.setAccessibilityLabel("Stop recording")
+        nextRecBtn.setAccessibilityLabel("Next recording")
+        renameRecBtn.setAccessibilityLabel("Rename recording")
+        monitorRecBtn.setAccessibilityLabel("Monitor off")
+        recordNameField.delegate = self
+        recordNameField.target = self; recordNameField.action = #selector(recordNameEdited)
+        recordNameField.font = NSFont.systemFont(ofSize: 11)
+        recordNameField.textColor = BRIGHT
+        recordNameField.backgroundColor = NSColor(white: 1, alpha: 0.06)
+        recordNameField.drawsBackground = true
+        recordNameField.isBezeled = false
+        recordNameField.isEditable = true; recordNameField.isSelectable = true
+        recordNameField.setAccessibilityLabel("Recording name")
+        recordElapsed.setAccessibilityLabel("Recording elapsed 00:00")
+        recordRow = [recBtn, pauseRecBtn, stopRecBtn, nextRecBtn, recordNameField, recordElapsed, monitorRecBtn, renameRecBtn]
+        for v in recordRow { root.addSubview(v) }
         permBtn.isBordered = false
         permBtn.attributedTitle = NSAttributedString(string: "PERMISSIONS", attributes: [.foregroundColor: NSColor(red: 0.91, green: 0.64, blue: 0.24, alpha: 1), .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold)])
         permBtn.target = self; permBtn.action = #selector(permClicked)
@@ -111,6 +149,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Discovery.shared.start()
         restore()
         MicLink.shared.start()
+        ControlServer.shared.start(owner: self)
         // v27 (Marko, 14.11.2026: "If I'm clicking on my Pixel phone to transcribe ... it should take the microphone from the
         // phone"): the Mac microphone goes to a phone only while he drives THAT phone from the Mac: Screen Copy is the active
         // app, its window is key, that phone's tab is shown and it got a click/key from the Mac in the last 5 s.
@@ -129,6 +168,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Updater.checkAtStart()
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in self?.updateMeters() }
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
+        writeRecordStatus()
     }
 
     func pipes(_ v: [NSView]) -> [NSView] {
@@ -175,18 +215,26 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for t in tabs { t.view.frame = root.bounds }
             for v in [tabBar, hl1, panel, status] as [NSView] { v.isHidden = true }
             for v in sliderRow { v.isHidden = true }
+            for v in recordRow { v.isHidden = true }
             muteBtn.isHidden = true
             return
         }
         tabBar.isHidden = false; hl1.isHidden = false; status.isHidden = false; panel.isHidden = true
         for v in sliderRow { v.isHidden = false }
-        let tabH: CGFloat = 36, bottom: CGFloat = 56
+        for v in recordRow { v.isHidden = false }
+        let twoRows = w < 900
+        let tabH: CGFloat = 36, bottom: CGFloat = twoRows ? 88 : 56
         tabBar.frame = NSRect(x: 0, y: h - tabH, width: w, height: tabH)
         hl1.frame = NSRect(x: 0, y: bottom, width: w, height: 1)
         let area = NSRect(x: 0, y: bottom + 1, width: w, height: max(0, h - tabH - bottom - 1))
         for t in tabs { t.view.frame = area }
         panel.frame = area
-        center(sliderRow, y: bottom - 40, spacing: 12)
+        if twoRows {
+            center(sliderRow, y: 16, spacing: 12)
+            centerRecording(y: 48)
+        } else {
+            center(sliderRow + recordRow, y: 16, spacing: 8)
+        }
         status.frame = NSRect(x: 12, y: h / 2 - 9, width: w - 24, height: 18)
         muteBtn.frame = NSRect(x: w - 40, y: h - 34, width: 32, height: 32); muteBtn.isHidden = false
         permBtn.frame = NSRect(x: w - 148, y: h - 28, width: 104, height: 20)
@@ -197,6 +245,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if v === slider { sizes.append(NSSize(width: max(70, min(180, root.bounds.width - 330)), height: 18)) }
             else if v === pvValue { sizes.append(NSSize(width: 70, height: 20)) }
             else if v === rotBtn { sizes.append(NSSize(width: 48, height: 40)) }
+            else if v === recordNameField { sizes.append(NSSize(width: 180, height: 22)) }
+            else if v === recordElapsed { sizes.append(NSSize(width: 42, height: 20)) }
             else { sizes.append(NSSize(width: fitW(v), height: 20)) }
         }
         let total = sizes.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(0, views.count - 1))
@@ -204,6 +254,19 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for (i, v) in views.enumerated() {
             v.frame = NSRect(x: x, y: y + (24 - sizes[i].height) / 2, width: sizes[i].width, height: sizes[i].height)
             x += sizes[i].width + spacing
+        }
+    }
+    func centerRecording(y: CGFloat) {
+        let spacing: CGFloat = 6
+        let fixed = recordRow.filter { $0 !== recordNameField }.reduce(CGFloat(0)) { sum, v in sum + (v === recordElapsed ? 42 : fitW(v)) }
+        let nameWidth = max(48, min(220, root.bounds.width - 16 - fixed - spacing * CGFloat(recordRow.count - 1)))
+        let widths = recordRow.map { $0 === recordNameField ? nameWidth : ($0 === recordElapsed ? 42 : fitW($0)) }
+        let total = widths.reduce(0, +) + spacing * CGFloat(recordRow.count - 1)
+        var x = max(8, (root.bounds.width - total) / 2)
+        for (i, v) in recordRow.enumerated() {
+            let height: CGFloat = v === recordNameField ? 22 : 20
+            v.frame = NSRect(x: x, y: y, width: widths[i], height: height)
+            x += widths[i] + spacing
         }
     }
 
@@ -238,6 +301,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         t.session.start()
         save()
         if sel { select(tabs.count - 1) }
+        refreshRecordUI()
+        writeRecordStatus()
         return t
     }
 
@@ -258,6 +323,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func select(_ i: Int) {
         guard i >= 0, i < tabs.count else { return }
+        if tabs.indices.contains(active) { tabs[active].nextRecordingName = recordNameField.stringValue }
         active = i
         let t = tabs[i]
         root.addSubview(t.view, positioned: .below, relativeTo: panel)
@@ -265,13 +331,15 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         t.session.sendResetVideo()
         applyAudio()
         lastUserVol = .distantPast; lastVolPoll = .distantPast; pollVolume()
-        refreshTabs(); refreshStatus()
+        recordNameField.stringValue = tabs[i].nextRecordingName
+        refreshTabs(); refreshStatus(); refreshRecordUI()
         window.makeFirstResponder(t.view)
     }
 
     func close(_ i: Int) {
         guard i >= 0, i < tabs.count else { return }
         let t = tabs.remove(at: i)
+        stopRecordingFor(t)
         closedIds.insert(t.phoneId)
         let sess = t.session
         DispatchQueue.global().async { sess.restorePhone(); sess.stop() }
@@ -280,12 +348,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         save(); refreshTabs()
         if !tabs.isEmpty { select(active) }
         refreshStatus(); reloadPanel()
+        writeRecordStatus()
     }
 
     func refreshTabs() {
         tabBar.live = tabs.map { $0.session.status == "LIVE" }
         tabBar.titles = tabs.map { $0.title }
         tabBar.selected = active
+        tabBar.recordingStates = tabs.map { $0.session.audio.recorder.snapshot().state }
     }
 
     // MARK: persistence
@@ -384,6 +454,56 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func cur() -> Session? { active < tabs.count ? tabs[active].session : nil }
     func applyAudio() {
         for t in tabs where !t.session.audio.enabled { t.session.audio.enabled = true }   // every phone's sound, pre-fader, to the Mac's default output
+    }
+
+    func controlTabs() -> [[String: Any]] {
+        tabs.enumerated().map { i, tab in
+            [
+                "tab": i + 1,
+                "phone": tab.name,
+                "serial": tab.session.serial,
+                "connected": tab.session.status == "LIVE",
+                "active": i == active
+            ]
+        }
+    }
+
+    func controlTap(tab index: Int, x: Int, y: Int) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        let session = tabs[index].session
+        guard session.status == "LIVE", session.width > 0, session.height > 0 else {
+            throw ControlActionError.conflict("tab \(index + 1) is not connected")
+        }
+        guard x >= 0, x < session.width, y >= 0, y < session.height else {
+            throw ControlActionError.badRequest("tap coordinates must be within \(session.width)x\(session.height)")
+        }
+        session.touch(action: 0, x: x, y: y)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { session.touch(action: 1, x: x, y: y) }
+        return ["tab": index + 1, "x": x, "y": y]
+    }
+
+    func controlKey(tab index: Int, code: Int) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        guard code >= 0, UInt64(code) <= UInt64(UInt32.max) else {
+            throw ControlActionError.badRequest("keycode must be an unsigned 32-bit integer")
+        }
+        guard tabs[index].session.status == "LIVE" else {
+            throw ControlActionError.conflict("tab \(index + 1) is not connected")
+        }
+        tabs[index].session.key(UInt32(code))
+        return ["tab": index + 1, "code": code]
+    }
+
+    func controlText(tab index: Int, text: String) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        guard !text.isEmpty, Array(text.utf8).count <= 300 else {
+            throw ControlActionError.badRequest("text must contain 1 to 300 UTF-8 bytes")
+        }
+        guard tabs[index].session.status == "LIVE" else {
+            throw ControlActionError.conflict("tab \(index + 1) is not connected")
+        }
+        tabs[index].session.text(text)
+        return ["tab": index + 1, "text": text]
     }
 
     // The slider is the phone's own media volume, two ways: moving it sets the phone, a change on the phone moves it.
@@ -561,7 +681,244 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             m.dim = AudioOut.globalMute
             m.step()
         }
+        tabBar.stepRecordingDots()
     }
+
+    // MARK: sound recorder
+    @objc func recordClicked() {
+        do { _ = try recordStart(tab: active, name: recordNameField.stringValue) }
+        catch { logLine("recorder: \(error)") }
+    }
+    @objc func pauseRecordingClicked() {
+        guard tabs.indices.contains(active) else { return }
+        do {
+            if tabs[active].session.audio.recorder.snapshot().state == .paused {
+                _ = try recordResume(tab: active)
+            } else {
+                _ = try recordPause(tab: active)
+            }
+        } catch { logLine("recorder: \(error)") }
+    }
+    @objc func stopRecordingClicked() {
+        do { _ = try recordStop(tab: active) }
+        catch { logLine("recorder: \(error)") }
+    }
+    @objc func nextRecordingClicked() {
+        do { _ = try recordNext(tab: active, name: nil) }
+        catch { logLine("recorder: \(error)") }
+    }
+    @objc func renameRecordingClicked() {
+        do { _ = try recordRename(tab: active, from: nil, to: recordNameField.stringValue) }
+        catch { logLine("recorder: \(error)") }
+    }
+    @objc func monitorRecordingClicked() {
+        guard tabs.indices.contains(active) else { return }
+        do { _ = try recordMonitor(tab: active, on: !tabs[active].recordingMonitor) }
+        catch { logLine("recorder: \(error)") }
+    }
+    @objc func recordNameEdited() {
+        guard tabs.indices.contains(active) else { return }
+        tabs[active].nextRecordingName = recordNameField.stringValue
+    }
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard (notification.object as? NSTextField) === recordNameField else { return }
+        recordNameEdited()
+    }
+
+    @discardableResult
+    func recordStart(tab index: Int, name: String?) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        let t = tabs[index]
+        let state = t.session.audio.recorder.snapshot().state
+        guard state != .recording, state != .paused else {
+            throw ControlActionError.conflict("tab \(index + 1) is already recording")
+        }
+        let proposed = (name ?? t.nextRecordingName).trimmingCharacters(in: .whitespacesAndNewlines)
+        let useName = proposed.isEmpty ? Recorder.defaultName(phone: t.name) : proposed
+        guard let url = t.session.audio.recorder.start(phone: t.name, name: useName) else {
+            throw ControlActionError.internalError("could not start recording")
+        }
+        t.muteBeforeRecording = t.session.audio.muted
+        t.recordingMonitor = false
+        t.session.audio.muted = true
+        t.nextRecordingName = url.deletingPathExtension().lastPathComponent
+        if index == active { recordNameField.stringValue = t.nextRecordingName }
+        recordingChanged()
+        return recordingState(tab: index)
+    }
+
+    @discardableResult
+    func recordPause(tab index: Int) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        let recorder = tabs[index].session.audio.recorder
+        guard recorder.snapshot().state == .recording else {
+            throw ControlActionError.conflict("tab \(index + 1) is not recording")
+        }
+        guard recorder.pause() else { throw ControlActionError.conflict("could not pause tab \(index + 1)") }
+        recordingChanged()
+        return recordingState(tab: index)
+    }
+
+    @discardableResult
+    func recordResume(tab index: Int) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        let recorder = tabs[index].session.audio.recorder
+        guard recorder.snapshot().state == .paused else {
+            throw ControlActionError.conflict("tab \(index + 1) is not paused")
+        }
+        guard recorder.resume() else { throw ControlActionError.conflict("could not resume tab \(index + 1)") }
+        recordingChanged()
+        return recordingState(tab: index)
+    }
+
+    @discardableResult
+    func recordStop(tab index: Int) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        guard stopRecordingFor(tabs[index]) else {
+            throw ControlActionError.conflict("tab \(index + 1) has no active recording")
+        }
+        recordingChanged()
+        return recordingState(tab: index)
+    }
+
+    func stopRecordingFor(_ tab: Tab) -> Bool {
+        let stopped = tab.session.audio.recorder.stop()
+        if let wasMuted = tab.muteBeforeRecording {
+            tab.session.audio.muted = wasMuted
+            tab.muteBeforeRecording = nil
+        }
+        tab.recordingMonitor = false
+        return stopped
+    }
+
+    @discardableResult
+    func recordNext(tab index: Int, name: String?) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        let t = tabs[index]
+        let current = t.session.audio.recorder.snapshot().name
+        let base = current.isEmpty ? t.nextRecordingName : current
+        _ = stopRecordingFor(t)
+        recordingChanged()
+        let next = name?.trimmingCharacters(in: .whitespacesAndNewlines).flatMap { $0.isEmpty ? nil : $0 } ?? Recorder.nextName(after: base)
+        return try recordStart(tab: index, name: next)
+    }
+
+    @discardableResult
+    func recordRename(tab index: Int, from: String?, to: String) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        let t = tabs[index]
+        guard let renamed = t.session.audio.recorder.renameFinished(from: from, to: to) else {
+            throw ControlActionError.conflict("recording could not be renamed; stop it first and check the source name")
+        }
+        let stem = renamed.deletingPathExtension().lastPathComponent
+        t.nextRecordingName = stem
+        if index == active { recordNameField.stringValue = stem }
+        recordingChanged()
+        return recordingState(tab: index)
+    }
+
+    @discardableResult
+    func recordMonitor(tab index: Int, on: Bool) throws -> [String: Any] {
+        guard tabs.indices.contains(index) else { throw ControlActionError.notFound("unknown tab \(index + 1)") }
+        let t = tabs[index]
+        let state = t.session.audio.recorder.snapshot().state
+        guard state == .recording || state == .paused else {
+            throw ControlActionError.conflict("tab \(index + 1) has no active recording")
+        }
+        t.recordingMonitor = on
+        t.session.audio.muted = !on
+        refreshRecordUI()
+        logLine("recorder: monitor \(on ? "on" : "off") for \(t.name)")
+        writeRecordStatus()
+        var result = recordingState(tab: index)
+        result["monitor"] = on
+        return result
+    }
+
+    func recordingChanged() {
+        refreshTabs()
+        refreshRecordUI()
+        writeRecordStatus()
+    }
+
+    func refreshRecordUI() {
+        for t in tabs {
+            let state = t.session.audio.recorder.snapshot().state
+            if state != .recording && state != .paused, let wasMuted = t.muteBeforeRecording {
+                t.session.audio.muted = wasMuted
+                t.muteBeforeRecording = nil
+                t.recordingMonitor = false
+            }
+        }
+        guard tabs.indices.contains(active) else {
+            recordElapsed.stringValue = "00:00"
+            recordElapsed.setAccessibilityLabel("Recording elapsed 00:00")
+            recBtn.isEnabled = false; pauseRecBtn.isEnabled = false; stopRecBtn.isEnabled = false
+            nextRecBtn.isEnabled = false; renameRecBtn.isEnabled = false; monitorRecBtn.isEnabled = false
+            return
+        }
+        let t = tabs[active]
+        let snapshot = t.session.audio.recorder.snapshot()
+        let activeTake = snapshot.state == .recording || snapshot.state == .paused
+        recBtn.isEnabled = !activeTake
+        pauseRecBtn.isEnabled = activeTake
+        stopRecBtn.isEnabled = activeTake
+        nextRecBtn.isEnabled = true
+        renameRecBtn.isEnabled = snapshot.state == .stopped
+        monitorRecBtn.isEnabled = activeTake
+        let pauseWord = snapshot.state == .paused ? "RESUME" : "PAUSE"
+        if pauseRecBtn.word != pauseWord {
+            pauseRecBtn.word = pauseWord
+            root.needsLayout = true
+        }
+        pauseRecBtn.setAccessibilityLabel(snapshot.state == .paused ? "Resume recording" : "Pause recording")
+        monitorRecBtn.setAccessibilityLabel(t.recordingMonitor ? "Monitor on" : "Monitor off")
+        let seconds = Int(snapshot.elapsed.rounded(.down))
+        let elapsed = String(format: "%02d:%02d", seconds / 60, seconds % 60)
+        recordElapsed.stringValue = elapsed
+        recordElapsed.setAccessibilityLabel("Recording elapsed \(elapsed)")
+    }
+
+    func recordingState(tab index: Int) -> [String: Any] {
+        let t = tabs[index]
+        let snapshot = t.session.audio.recorder.snapshot()
+        return [
+            "tab": index + 1,
+            "phone": t.name,
+            "state": snapshot.state.rawValue,
+            "name": snapshot.name,
+            "file": snapshot.file?.path ?? "",
+            "elapsed_s": snapshot.elapsed,
+            "level_rms": snapshot.levelRMS
+        ]
+    }
+
+    func recordStatusEntries() -> [[String: Any]] {
+        tabs.indices.map { recordingState(tab: $0) }
+    }
+
+    func writeRecordStatus() {
+        lastRecordStatusWrite = Date()
+        let entries = recordStatusEntries()
+        do {
+            let support = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Application Support", isDirectory: true)
+                .appendingPathComponent("ScreenCopyMantra", isDirectory: true)
+            try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: entries)
+            try data.write(to: support.appendingPathComponent("record_status.json"), options: .atomic)
+        } catch {
+            logLine("recorder: status write failed: \(error)")
+        }
+    }
+
+    func recordingTabIndex(_ query: [String: String]) -> Int? {
+        guard let text = query["tab"] else { return tabs.indices.contains(active) ? active : nil }
+        guard let number = Int(text), tabs.indices.contains(number - 1) else { return nil }
+        return number - 1
+    }
+
     @objc func permClicked() { MicPermission.clicked(); lastPermCheck = .distantPast }
     func tick() {
         if Date().timeIntervalSince(lastPermCheck) > 2 {
@@ -574,6 +931,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         paintRotation()
         if immersive && !cursorHidden && Date().timeIntervalSince(lastMouse) > 2 { NSCursor.hide(); cursorHidden = true }
         refreshTabs()
+        refreshRecordUI()
+        if Date().timeIntervalSince(lastRecordStatusWrite) >= 1 { writeRecordStatus() }
         if Date().timeIntervalSince(lastLog) > 5 {
             lastLog = Date()
             for t in tabs { logLine("\(t.title): \(t.session.status) \(t.session.width)x\(t.session.height) frames \(t.session.framesTotal) fps \(t.session.fps) \(t.session.audioState) packets \(t.session.audio.packets) level \(Int(t.session.audio.levelDb)) dB \(t.session.audio.statsLine())") }
@@ -590,6 +949,44 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func application(_ app: NSApplication, open urls: [URL]) {
         for u in urls where u.scheme == "screencopy" {
+            if u.host == "record" {
+                let components = URLComponents(url: u, resolvingAgainstBaseURL: false)
+                var query: [String: String] = [:]
+                for item in components?.queryItems ?? [] where !item.name.isEmpty {
+                    if let value = item.value { query[item.name] = value }
+                }
+                let action = u.path
+                logLine("recorder URL: action \(action.isEmpty ? "/" : action) tab \(query["tab"] ?? "active")")
+                let index = recordingTabIndex(query)
+                guard let index = index else {
+                    logLine("recorder URL: invalid tab \(query["tab"] ?? "?")")
+                    continue
+                }
+                do {
+                    switch action {
+                    case "/start":
+                        _ = try recordStart(tab: index, name: query["name"])
+                    case "/pause":
+                        _ = try recordPause(tab: index)
+                    case "/resume":
+                        _ = try recordResume(tab: index)
+                    case "/stop":
+                        _ = try recordStop(tab: index)
+                    case "/next":
+                        _ = try recordNext(tab: index, name: query["name"])
+                    case "/rename":
+                        guard let from = query["from"], let to = query["to"] else {
+                            throw ControlActionError.badRequest("rename needs from and to")
+                        }
+                        _ = try recordRename(tab: index, from: from, to: to)
+                    default:
+                        throw ControlActionError.notFound("unknown recorder action \(action)")
+                    }
+                } catch {
+                    logLine("recorder URL: \(error)")
+                }
+                continue
+            }
             if u.host == "tab", let n = Int(u.lastPathComponent) { panelShown = false; panel.isHidden = true; select(n - 1) }
             if u.host == "volume", let n = Int(u.lastPathComponent) { setPhoneVolume(n) }
             if u.host == "audiorec", let n = Int(u.lastPathComponent), tabs.indices.contains(active) { tabs[active].session.audio.startRecording(seconds: max(1, min(120, n))) }
@@ -598,9 +995,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if u.host == "rotate" { toggleRotation() }          // test hook: the same as a press on the button
             // test hook: screencopy://tap/<x>/<y> in phone pixels = one Mac click on the active tab (down, 80 ms, up)
             if u.host == "tap", u.pathComponents.count >= 3, let x = Int(u.pathComponents[1]), let y = Int(u.pathComponents[2]), tabs.indices.contains(active) {
-                let s = tabs[active].session
-                s.touch(action: 0, x: x, y: y)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { s.touch(action: 1, x: x, y: y) }
+                do { _ = try controlTap(tab: active, x: x, y: y) }
+                catch { logLine("tap URL: \(error)") }
             }
             if u.host == "window" { logLine("window number \(window.windowNumber)") }
         }
@@ -611,6 +1007,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for t in tabs { g.enter(); DispatchQueue.global().async { t.session.restorePhone(); g.leave() } }
         _ = g.wait(timeout: .now() + 7)
         for t in tabs { t.session.stop() }
+        writeRecordStatus()
         MicLink.shared.removeAllReverse()
     }
 }
